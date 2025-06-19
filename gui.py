@@ -41,15 +41,19 @@ def main():
     images_status = tk.Label(root, text="", font=("Helvetica", 14))
     series_info = {}
     series_vars = {}
+    checkbox_texts = {}
 
     def on_get_images():
-        nonlocal series_info, series_vars
+        nonlocal series_info, series_vars, checkbox_texts
         # Load imaging series only when button is clicked
         series_info = list_imaging_series(str(input_dir))
-        # Clear any previous entries
-        for widget in series_frame.winfo_children()[1:]:
+        # Clear previous entries
+        for widget in series_frame.winfo_children():
             widget.destroy()
         series_vars.clear()
+        checkbox_texts.clear()
+
+        tk.Label(series_frame, text="Imaging series available:").pack(anchor="w")
         # Populate checkboxes for each series
         for uid, info in series_info.items():
             text = f"{info['date']} {info['time']} – {info['modality']} - {info['description']} (files={len(info['files'])})"
@@ -57,6 +61,10 @@ def main():
             chk = tk.Checkbutton(series_frame, text=text, variable=var)
             chk.pack(anchor='w')
             series_vars[uid] = var
+            checkbox_texts[uid] = text
+            # attach trace to update dropdown when toggled
+            var.trace_add('write', update_dropdown)
+
         # Update dropdown after loading
         update_dropdown()
         # Show success
@@ -69,7 +77,6 @@ def main():
     # Imaging series frame (initially empty)
     series_frame = tk.Frame(root)
     series_frame.grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=10)
-    tk.Label(series_frame, text="Imaging series available:").pack(anchor="w")
 
     # Dropdown menu for registration series
     selected_var = tk.StringVar()
@@ -79,28 +86,21 @@ def main():
     dropdown.grid(row=5, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
     def update_dropdown(*args):
+        # get all selected series
         selected_uids = [uid for uid, var in series_vars.items() if var.get()]
         menu = dropdown["menu"]
         menu.delete(0, 'end')
         selection_map.clear()
         for uid in selected_uids:
-            desc = series_info[uid]['description']
-            selection_map[desc] = uid
-            menu.add_command(label=desc, command=tk._setit(selected_var, desc))
-        # Default to first selection
+            text = checkbox_texts.get(uid, series_info[uid]['description'])
+            selection_map[text] = uid
+            menu.add_command(label=text, command=tk._setit(selected_var, text))
+        # Default to first selection label
         if selected_uids:
-            selected_var.set(series_info[selected_uids[0]]['description'])
+            first = selected_uids[0]
+            selected_var.set(checkbox_texts[first])
         else:
             selected_var.set('')
-
-    # Trace checkbox changes to update dropdown
-    # (will start having traces when series loaded)
-    def attach_traces():
-        for var in series_vars.values():
-            var.trace_add('write', update_dropdown)
-
-    # Call attach_traces after loading series
-    attach_traces()
 
     root.mainloop()
 
