@@ -5,7 +5,8 @@ from pathlib import Path
 
 from preprocessing import list_imaging_series, zip_directory
 from register import get_base_plan
-from utils import load_environment
+from resampling import resample_ct
+from utils import load_environment, check_if_ct_present
 
 
 def main():
@@ -117,6 +118,25 @@ def main():
     btn_cleanup = tk.Button(root, text="Clean up", command=on_cleanup)
     btn_cleanup.grid(row=7, column=0, sticky="w", padx=10, pady=(0, 10))
     cleanup_status.grid(row=7, column=1, sticky="w")
+
+    # Resample button
+    resample_status = tk.Label(root, text="", font=("Helvetica", 14))
+
+    def on_resample():
+        resample_status.config(text="\u23F3", fg="orange")  # hourglass
+        root.update_idletasks()
+        try:
+            if check_if_ct_present(str(input_dir)):
+                resample_ct(str(input_dir))
+                resample_status.config(text="\u2705", fg="green")
+            else:
+                resample_status.config(text="\u274C", fg="red")
+        except Exception:
+            resample_status.config(text="\u274C", fg="red")
+
+    btn_resample = tk.Button(root, text="Resample", command=on_resample)
+    btn_resample.grid(row=8, column=0, sticky="w", padx=10, pady=(0, 10))
+    resample_status.grid(row=8, column=1, sticky="w")
 
     def update_dropdown(*args):
         # get all selected series
