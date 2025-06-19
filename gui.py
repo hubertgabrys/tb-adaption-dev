@@ -100,13 +100,10 @@ def main():
     cleanup_status = tk.Label(root, text="", font=("Helvetica", 14))
 
     def on_cleanup():
-        selected_text = selected_var.get()
-        uid_to_keep = selection_map.get(selected_text)
-        if not uid_to_keep:
-            return
-
-        for uid, info in series_info.items():
-            if uid != uid_to_keep:
+        # keep only the series with checkboxes ticked
+        uids_to_keep = [uid for uid, var in series_vars.items() if var.get()]
+        for uid, info in list(series_info.items()):
+            if uid not in uids_to_keep:
                 for fpath in info["files"]:
                     try:
                         os.remove(fpath)
