@@ -3,7 +3,7 @@ import sys
 import tkinter as tk
 from pathlib import Path
 
-from preprocessing import list_imaging_series
+from preprocessing import list_imaging_series, zip_directory
 from register import get_base_plan
 from utils import load_environment
 
@@ -84,6 +84,39 @@ def main():
     tk.Label(root, text="Select Series for Matching").grid(row=4, column=0, columnspan=2, sticky="w", padx=10)
     dropdown = tk.OptionMenu(root, selected_var, '')
     dropdown.grid(row=5, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+
+    # Backup button under the dropdown
+    backup_status = tk.Label(root, text="", font=("Helvetica", 14))
+
+    def on_backup():
+        zip_directory(str(input_dir), str(input_dir) + ".zip")
+        backup_status.config(text="\u2705", fg="green")
+
+    btn_backup = tk.Button(root, text="Create backup", command=on_backup)
+    btn_backup.grid(row=6, column=0, sticky="w", padx=10)
+    backup_status.grid(row=6, column=1, sticky="w")
+
+    # Clean up button
+    cleanup_status = tk.Label(root, text="", font=("Helvetica", 14))
+
+    def on_cleanup():
+        # keep only the series with checkboxes ticked
+        uids_to_keep = [uid for uid, var in series_vars.items() if var.get()]
+        for uid, info in list(series_info.items()):
+            if uid not in uids_to_keep:
+                for fpath in info["files"]:
+                    try:
+                        os.remove(fpath)
+                    except Exception:
+                        pass
+
+        cleanup_status.config(text="\u2705", fg="green")
+        # refresh displayed series after cleanup
+        on_get_images()
+
+    btn_cleanup = tk.Button(root, text="Clean up", command=on_cleanup)
+    btn_cleanup.grid(row=7, column=0, sticky="w", padx=10, pady=(0, 10))
+    cleanup_status.grid(row=7, column=1, sticky="w")
 
     def update_dropdown(*args):
         # get all selected series
