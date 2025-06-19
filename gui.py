@@ -9,6 +9,7 @@ from preprocessing import (
     process_single_dicom_file,
 )
 from register import get_base_plan, perform_registration
+from tkinter import messagebox
 from resampling import resample_ct
 from utils import load_environment, check_if_ct_present, find_series_uids
 from segmentation import create_empty_rtstruct
@@ -168,8 +169,11 @@ def main():
             for series_uid, filepaths in dicom_series.items():
                 create_empty_rtstruct(str(input_dir), series_uid, filepaths)
 
+            def confirm():
+                return messagebox.askyesno("Registration", "Accept registration result?")
+
             try:
-                rigid_transform = perform_registration(str(input_dir), patient_id, rtplan_label)
+                rigid_transform = perform_registration(str(input_dir), patient_id, rtplan_label, confirm_fn=confirm)
             except Exception:
                 rigid_transform = None
 

@@ -491,7 +491,7 @@ def run_viewer(fixed_image, moving_image):
     overlay = MultiViewOverlay(fixed_array, moving_array)
     return overlay.shift_z
 
-def perform_registration(current_directory, patient_id, rtplan_label):
+def perform_registration(current_directory, patient_id, rtplan_label, confirm_fn=None):
     fixed_dir = current_directory
     baseplan_dir = Path(os.environ.get('BASEPLAN_DIR'))
     moving_dir = baseplan_dir / patient_id / rtplan_label
@@ -553,9 +553,12 @@ def perform_registration(current_directory, patient_id, rtplan_label):
     print(f"Rigid translation: {translation}")
     run_viewer(fixed_image, moving_reg)
 
-    registration_accepted = input("Registration accepted? (y/n): ")
+    if confirm_fn is None:
+        registration_accepted = input("Registration accepted? (y/n): ") == "y"
+    else:
+        registration_accepted = confirm_fn()
 
-    if registration_accepted == "y":
+    if registration_accepted:
         print(f"{get_datetime()} Registration accepted")
         # In this implementation the transform is inverted inside transformation_matrix()
         # so we pass rigid_transform as is.
