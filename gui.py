@@ -11,13 +11,40 @@ from utils import load_environment
 def main():
     load_environment(".env")
     try:
-        patient_id = os.environ.get('PATIENT_ID')
-        rtplan_label = os.environ.get('RTPLAN_LABEL')
-        rtplan_uid = os.environ.get('RTPLAN_UID')
-    except IndexError:
-        print("Usage: python gui.py <patient_id> <rtplan_label> <rtplan_uid>")
-        sys.exit(1)
+    baseplan_status = tk.Label(root, text="", font=("Helvetica", 14))
+        baseplan_status.config(text="\u2705", fg="green")
+    baseplan_status.grid(row=1, column=1, sticky="w")
 
+    # Get Images button with status label
+    images_status = tk.Label(root, text="", font=("Helvetica", 14))
+
+    def refresh_series():
+        nonlocal series_info, series_vars
+        series_info = list_imaging_series(str(input_dir))
+        for widget in series_frame.winfo_children()[1:]:
+            widget.destroy()
+        series_vars.clear()
+        for uid, info in series_info.items():
+            text = f"{info['date']} {info['time']} – {info['modality']} - {info['description']} (files={len(info['files'])})"
+            var = tk.BooleanVar(value=False)
+            chk = tk.Checkbutton(series_frame, text=text, variable=var)
+            chk.pack(anchor='w')
+            series_vars[uid] = var
+        update_dropdown()
+        images_status.config(text='\u2705', fg='green')
+
+    btn_images = tk.Button(root, text="Get Images", command=refresh_series)
+    btn_images.grid(row=2, column=0, sticky="w", padx=10, pady=(0, 5))
+    images_status.grid(row=2, column=1, sticky="w")
+    series_frame.grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=10)
+    selection_map = {}
+    tk.Label(root, text="Select Series for Matching").grid(row=4, column=0, columnspan=2, sticky="w", padx=10)
+    dropdown.grid(row=5, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+        selection_map.clear()
+            desc = series_info[uid]["description"]
+            selection_map[desc] = uid
+            menu.add_command(label=desc, command=tk._setit(selected_var, desc))
+            selected_var.set(series_info[selected[0]]["description"])
     input_dir = Path(os.environ.get("INPUT_DIR")) / patient_id
 
     root = tk.Tk()
