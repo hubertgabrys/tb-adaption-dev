@@ -11,40 +11,13 @@ from utils import load_environment
 def main():
     load_environment(".env")
     try:
-    baseplan_status = tk.Label(root, text="", font=("Helvetica", 14))
-        baseplan_status.config(text="\u2705", fg="green")
-    baseplan_status.grid(row=1, column=1, sticky="w")
+        patient_id = os.environ.get('PATIENT_ID')
+        rtplan_label = os.environ.get('RTPLAN_LABEL')
+        rtplan_uid = os.environ.get('RTPLAN_UID')
+    except IndexError:
+        print("Usage: python gui.py <patient_id> <rtplan_label> <rtplan_uid>")
+        sys.exit(1)
 
-    # Get Images button with status label
-    images_status = tk.Label(root, text="", font=("Helvetica", 14))
-
-    def refresh_series():
-        nonlocal series_info, series_vars
-        series_info = list_imaging_series(str(input_dir))
-        for widget in series_frame.winfo_children()[1:]:
-            widget.destroy()
-        series_vars.clear()
-        for uid, info in series_info.items():
-            text = f"{info['date']} {info['time']} – {info['modality']} - {info['description']} (files={len(info['files'])})"
-            var = tk.BooleanVar(value=False)
-            chk = tk.Checkbutton(series_frame, text=text, variable=var)
-            chk.pack(anchor='w')
-            series_vars[uid] = var
-        update_dropdown()
-        images_status.config(text='\u2705', fg='green')
-
-    btn_images = tk.Button(root, text="Get Images", command=refresh_series)
-    btn_images.grid(row=2, column=0, sticky="w", padx=10, pady=(0, 5))
-    images_status.grid(row=2, column=1, sticky="w")
-    series_frame.grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=10)
-    selection_map = {}
-    tk.Label(root, text="Select Series for Matching").grid(row=4, column=0, columnspan=2, sticky="w", padx=10)
-    dropdown.grid(row=5, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
-        selection_map.clear()
-            desc = series_info[uid]["description"]
-            selection_map[desc] = uid
-            menu.add_command(label=desc, command=tk._setit(selected_var, desc))
-            selected_var.set(series_info[selected[0]]["description"])
     input_dir = Path(os.environ.get("INPUT_DIR")) / patient_id
 
     root = tk.Tk()
@@ -55,52 +28,81 @@ def main():
     lbl_title.grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=10)
 
     # Get Base Plan button with status label
-    status_label = tk.Label(root, text="", font=("Helvetica", 14))
-
+    baseplan_status = tk.Label(root, text="", font=("Helvetica", 14))
     def on_get_base_plan():
         get_base_plan(patient_id, rtplan_label, rtplan_uid)
-        status_label.config(text="\u2705", fg="green")
+        baseplan_status.config(text="\u2705", fg="green")
 
     btn_baseplan = tk.Button(root, text="Get Base Plan", command=on_get_base_plan)
     btn_baseplan.grid(row=1, column=0, sticky="w", padx=10)
-    status_label.grid(row=1, column=1, sticky="w")
+    baseplan_status.grid(row=1, column=1, sticky="w")
 
-    # Imaging series checkboxes
-    series_frame = tk.Frame(root)
-    series_frame.grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=10)
-
-    tk.Label(series_frame, text="Imaging series in CT import directory:").pack(anchor="w")
-
-    series_info = list_imaging_series(str(input_dir))
+    # Get Images button with status label
+    images_status = tk.Label(root, text="", font=("Helvetica", 14))
+    series_info = {}
     series_vars = {}
-    for uid, info in series_info.items():
-        text = f"{info['date']} {info['time']} – {info['modality']} - {info['description']} (files={len(info['files'])})"
-        var = tk.BooleanVar(value=False)
-        chk = tk.Checkbutton(series_frame, text=text, variable=var)
-        chk.pack(anchor="w")
-        series_vars[uid] = var
+
+    def on_get_images():
+        nonlocal series_info, series_vars
+        # Load imaging series only when button is clicked
+        series_info = list_imaging_series(str(input_dir))
+        # Clear any previous entries
+        for widget in series_frame.winfo_children()[1:]:
+            widget.destroy()
+        series_vars.clear()
+        # Populate checkboxes for each series
+        for uid, info in series_info.items():
+            text = f"{info['date']} {info['time']} – {info['modality']} - {info['description']} (files={len(info['files'])})"
+            var = tk.BooleanVar(value=False)
+            chk = tk.Checkbutton(series_frame, text=text, variable=var)
+            chk.pack(anchor='w')
+            series_vars[uid] = var
+        # Update dropdown after loading
+        update_dropdown()
+        # Show success
+        images_status.config(text="\u2705", fg="green")
+
+    btn_images = tk.Button(root, text="Get Images", command=on_get_images)
+    btn_images.grid(row=2, column=0, sticky="w", padx=10, pady=(0, 5))
+    images_status.grid(row=2, column=1, sticky="w")
+
+    # Imaging series frame (initially empty)
+    series_frame = tk.Frame(root)
+    series_frame.grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=10)
+    tk.Label(series_frame, text="Imaging series available:").pack(anchor="w")
 
     # Dropdown menu for registration series
     selected_var = tk.StringVar()
-    dropdown = tk.OptionMenu(root, selected_var, "")
-    dropdown.grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    selection_map = {}
+    tk.Label(root, text="Select Series for Matching").grid(row=4, column=0, columnspan=2, sticky="w", padx=10)
+    dropdown = tk.OptionMenu(root, selected_var, '')
+    dropdown.grid(row=5, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
     def update_dropdown(*args):
-        selected = [uid for uid, v in series_vars.items() if v.get()]
+        selected_uids = [uid for uid, var in series_vars.items() if var.get()]
         menu = dropdown["menu"]
-        menu.delete(0, "end")
-        for uid in selected:
-            menu.add_command(label=uid, command=tk._setit(selected_var, uid))
-        if selected:
-            selected_var.set(selected[0])
+        menu.delete(0, 'end')
+        selection_map.clear()
+        for uid in selected_uids:
+            desc = series_info[uid]['description']
+            selection_map[desc] = uid
+            menu.add_command(label=desc, command=tk._setit(selected_var, desc))
+        # Default to first selection
+        if selected_uids:
+            selected_var.set(series_info[selected_uids[0]]['description'])
         else:
-            selected_var.set("")
+            selected_var.set('')
 
-    for v in series_vars.values():
-        v.trace_add("write", update_dropdown)
+    # Trace checkbox changes to update dropdown
+    # (will start having traces when series loaded)
+    def attach_traces():
+        for var in series_vars.values():
+            var.trace_add('write', update_dropdown)
+
+    # Call attach_traces after loading series
+    attach_traces()
 
     root.mainloop()
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
