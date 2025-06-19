@@ -3,7 +3,11 @@ import sys
 import tkinter as tk
 from pathlib import Path
 
-from preprocessing import list_imaging_series, zip_directory
+from preprocessing import (
+    list_imaging_series,
+    zip_directory,
+    process_single_dicom_file,
+)
 from register import get_base_plan
 from resampling import resample_ct
 from utils import load_environment, check_if_ct_present
@@ -110,6 +114,19 @@ def main():
                         os.remove(fpath)
                     except Exception:
                         pass
+
+        # rename remaining files using modality information
+        for uid in uids_to_keep:
+            info = series_info.get(uid)
+            if not info:
+                continue
+            for fpath in info["files"]:
+                directory_path = os.path.dirname(fpath)
+                filename = os.path.basename(fpath)
+                try:
+                    process_single_dicom_file(directory_path, filename)
+                except Exception:
+                    pass
 
         cleanup_status.config(text="\u2705", fg="green")
         # refresh displayed series after cleanup
