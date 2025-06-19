@@ -13,6 +13,16 @@ from resampling import resample_ct
 from utils import load_environment, check_if_ct_present
 
 
+def rename_all_dicom_files(directory_path: str) -> None:
+    """Rename all DICOM files within directory_path using modality prefixes."""
+    for root_dir, _, files in os.walk(directory_path):
+        for fname in files:
+            try:
+                process_single_dicom_file(root_dir, fname)
+            except Exception:
+                pass
+
+
 def main():
     load_environment(".env")
     try:
@@ -34,15 +44,21 @@ def main():
 
     # Get Base Plan button with status label
     baseplan_status = tk.Label(root, text="", font=("Helvetica", 14))
+
     def on_get_base_plan():
-        get_base_plan(patient_id, rtplan_label, rtplan_uid)
-        baseplan_status.config(text="\u2705", fg="green")
+        baseplan_status.config(text="\u23F3", fg="orange")  # hourglass
+        root.update_idletasks()
+        try:
+            get_base_plan(patient_id, rtplan_label, rtplan_uid)
+            baseplan_status.config(text="\u2705", fg="green")
+        except Exception:
+            baseplan_status.config(text="\u274C", fg="red")
 
     btn_baseplan = tk.Button(root, text="Get Base Plan", command=on_get_base_plan)
     btn_baseplan.grid(row=1, column=0, sticky="w", padx=10)
     baseplan_status.grid(row=1, column=1, sticky="w")
 
-    # Get Images button with status label
+    # Get Imaging button with status label
     images_status = tk.Label(root, text="", font=("Helvetica", 14))
     series_info = {}
     series_vars = {}
@@ -50,32 +66,40 @@ def main():
 
     def on_get_images():
         nonlocal series_info, series_vars, checkbox_texts
-        # Load imaging series only when button is clicked
-        series_info = list_imaging_series(str(input_dir))
-        # Clear previous entries
-        for widget in series_frame.winfo_children():
-            widget.destroy()
-        series_vars.clear()
-        checkbox_texts.clear()
+        images_status.config(text="\u23F3", fg="orange")  # hourglass
+        root.update_idletasks()
+        try:
+            rename_all_dicom_files(str(input_dir))
+            # Load imaging series only when button is clicked
+            series_info = list_imaging_series(str(input_dir))
+            # Clear previous entries
+            for widget in series_frame.winfo_children():
+                widget.destroy()
+            series_vars.clear()
+            checkbox_texts.clear()
 
-        tk.Label(series_frame, text="Imaging series available:").pack(anchor="w")
-        # Populate checkboxes for each series
-        for uid, info in series_info.items():
-            text = f"{info['date']} {info['time']} – {info['modality']} - {info['description']} (files={len(info['files'])})"
-            var = tk.BooleanVar(value=False)
-            chk = tk.Checkbutton(series_frame, text=text, variable=var)
-            chk.pack(anchor='w')
-            series_vars[uid] = var
-            checkbox_texts[uid] = text
-            # attach trace to update dropdown when toggled
-            var.trace_add('write', update_dropdown)
+            tk.Label(series_frame, text="Imaging series available:").pack(anchor="w")
+            # Populate checkboxes for each series
+            for uid, info in series_info.items():
+                text = (
+                    f"{info['date']} {info['time']} – {info['modality']} - {info['description']}"
+                    f" (files={len(info['files'])})"
+                )
+                var = tk.BooleanVar(value=False)
+                chk = tk.Checkbutton(series_frame, text=text, variable=var)
+                chk.pack(anchor='w')
+                series_vars[uid] = var
+                checkbox_texts[uid] = text
+                # attach trace to update dropdown when toggled
+                var.trace_add('write', update_dropdown)
 
-        # Update dropdown after loading
-        update_dropdown()
-        # Show success
-        images_status.config(text="\u2705", fg="green")
+            # Update dropdown after loading
+            update_dropdown()
+            images_status.config(text="\u2705", fg="green")
+        except Exception:
+            images_status.config(text="\u274C", fg="red")
 
-    btn_images = tk.Button(root, text="Get Images", command=on_get_images)
+    btn_images = tk.Button(root, text="Get Imaging", command=on_get_images)
     btn_images.grid(row=2, column=0, sticky="w", padx=10, pady=(0, 5))
     images_status.grid(row=2, column=1, sticky="w")
 
@@ -94,8 +118,13 @@ def main():
     backup_status = tk.Label(root, text="", font=("Helvetica", 14))
 
     def on_backup():
-        zip_directory(str(input_dir), str(input_dir) + ".zip")
-        backup_status.config(text="\u2705", fg="green")
+        backup_status.config(text="\u23F3", fg="orange")  # hourglass
+        root.update_idletasks()
+        try:
+            zip_directory(str(input_dir), str(input_dir) + ".zip")
+            backup_status.config(text="\u2705", fg="green")
+        except Exception:
+            backup_status.config(text="\u274C", fg="red")
 
     btn_backup = tk.Button(root, text="Create backup", command=on_backup)
     btn_backup.grid(row=6, column=0, sticky="w", padx=10)
@@ -105,30 +134,21 @@ def main():
     cleanup_status = tk.Label(root, text="", font=("Helvetica", 14))
 
     def on_cleanup():
-        # keep only the series with checkboxes ticked
-        uids_to_keep = [uid for uid, var in series_vars.items() if var.get()]
-        for uid, info in list(series_info.items()):
-            if uid not in uids_to_keep:
-                for fpath in info["files"]:
-                    try:
-                        os.remove(fpath)
-                    except Exception:
-                        pass
-
-        # rename remaining files using modality information
-        for uid in uids_to_keep:
-            info = series_info.get(uid)
-            if not info:
-                continue
-            for fpath in info["files"]:
-                directory_path = os.path.dirname(fpath)
-                filename = os.path.basename(fpath)
-                try:
-                    process_single_dicom_file(directory_path, filename)
-                except Exception:
-                    pass
-
-        cleanup_status.config(text="\u2705", fg="green")
+        cleanup_status.config(text="\u23F3", fg="orange")  # hourglass
+        root.update_idletasks()
+        try:
+            # keep only the series with checkboxes ticked
+            uids_to_keep = [uid for uid, var in series_vars.items() if var.get()]
+            for uid, info in list(series_info.items()):
+                if uid not in uids_to_keep:
+                    for fpath in info["files"]:
+                        try:
+                            os.remove(fpath)
+                        except Exception:
+                            pass
+            cleanup_status.config(text="\u2705", fg="green")
+        except Exception:
+            cleanup_status.config(text="\u274C", fg="red")
         # refresh displayed series after cleanup
         on_get_images()
 
