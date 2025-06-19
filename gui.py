@@ -8,9 +8,11 @@ from preprocessing import (
     zip_directory,
     process_single_dicom_file,
 )
-from register import get_base_plan
+from register import get_base_plan, perform_registration
 from resampling import resample_ct
-from utils import load_environment, check_if_ct_present
+from utils import load_environment, check_if_ct_present, find_series_uids
+from segmentation import create_empty_rtstruct
+from copy_structures import copy_structures
 
 
 def main():
@@ -154,6 +156,32 @@ def main():
     btn_resample = tk.Button(root, text="Resample", command=on_resample)
     btn_resample.grid(row=8, column=0, sticky="w", padx=10, pady=(0, 10))
     resample_status.grid(row=8, column=1, sticky="w")
+
+    # Register button
+    register_status = tk.Label(root, text="", font=("Helvetica", 14))
+
+    def on_register():
+        register_status.config(text="\u23F3", fg="orange")
+        root.update_idletasks()
+        try:
+            dicom_series = find_series_uids(str(input_dir))
+            for series_uid, filepaths in dicom_series.items():
+                create_empty_rtstruct(str(input_dir), series_uid, filepaths)
+
+            try:
+                rigid_transform = perform_registration(str(input_dir), patient_id, rtplan_label)
+            except Exception:
+                rigid_transform = None
+
+            if rigid_transform:
+                copy_structures(str(input_dir), patient_id, rtplan_label, rigid_transform)
+            register_status.config(text="\u2705", fg="green")
+        except Exception:
+            register_status.config(text="\u274C", fg="red")
+
+    btn_register = tk.Button(root, text="Register", command=on_register)
+    btn_register.grid(row=9, column=0, sticky="w", padx=10, pady=(0, 10))
+    register_status.grid(row=9, column=1, sticky="w")
 
     def update_dropdown(*args):
         # get all selected series
