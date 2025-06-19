@@ -39,8 +39,8 @@ def main():
     # current_directory = f"\\\\ariaimg.usz.ch\\dicom$\\Import\\CT\\{patient_id}"
 
     # Testing
-    # patient_id = "11243549"
-    # rtplan_label = "RApel2_5a"
+    # patient_id = os.environ.get('PATIENT_ID')
+    # rtplan_label = os.environ.get('RTPLAN_LABEL')
     # current_directory = f"\\\\ariaimg.usz.ch\\dicom$\\Import\\CT\\{patient_id}"
 
     # Start
