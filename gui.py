@@ -11,9 +11,9 @@ from utils import load_environment
 def main():
     load_environment(".env")
     try:
-        patient_id = sys.argv[1]
-        rtplan_label = sys.argv[2]
-        rtplan_uid = sys.argv[3]
+        patient_id = os.environ.get('PATIENT_ID')
+        rtplan_label = os.environ.get('RTPLAN_LABEL')
+        rtplan_uid = os.environ.get('RTPLAN_UID')
     except IndexError:
         print("Usage: python gui.py <patient_id> <rtplan_label> <rtplan_uid>")
         sys.exit(1)
@@ -42,7 +42,7 @@ def main():
     series_frame = tk.Frame(root)
     series_frame.grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=10)
 
-    tk.Label(series_frame, text="Imaging series available:").pack(anchor="w")
+    tk.Label(series_frame, text="Imaging series in CT import directory:").pack(anchor="w")
 
     series_info = list_imaging_series(str(input_dir))
     series_vars = {}
