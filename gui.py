@@ -101,7 +101,7 @@ def main():
         except Exception:
             baseplan_status.config(text="\u274C", fg="red")
 
-    btn_baseplan = tk.Button(root, text="Get Base Plan", command=on_get_base_plan)
+    btn_baseplan = tk.Button(root, text="Get base plan", command=on_get_base_plan)
     btn_baseplan.grid(row=3, column=0, sticky="w", padx=10)
     baseplan_status.grid(row=3, column=1, sticky="w")
 
@@ -146,7 +146,7 @@ def main():
         except Exception:
             images_status.config(text="\u274C", fg="red")
 
-    btn_images = tk.Button(root, text="Get Imaging", command=on_get_images)
+    btn_images = tk.Button(root, text="Get imaging", command=on_get_images)
     btn_images.grid(row=4, column=0, sticky="w", padx=10, pady=(0, 5))
     images_status.grid(row=4, column=1, sticky="w")
 
@@ -212,7 +212,7 @@ def main():
         except Exception:
             resample_status.config(text="\u274C", fg="red")
 
-    btn_resample = tk.Button(root, text="Resample", command=on_resample)
+    btn_resample = tk.Button(root, text="Resample sCT", command=on_resample)
     btn_resample.grid(row=10, column=0, sticky="w", padx=10, pady=(0, 10))
     resample_status.grid(row=10, column=1, sticky="w")
 
@@ -220,7 +220,7 @@ def main():
     selected_var = tk.StringVar()
     selection_map = {}
 
-    tk.Label(root, text="Select Series for Matching").grid(row=11, column=0, columnspan=2, sticky="w", padx=10)
+    tk.Label(root, text="Select Series for Registration").grid(row=11, column=0, columnspan=2, sticky="w", padx=10)
     dropdown = tk.OptionMenu(root, selected_var, '')
     dropdown.grid(row=12, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
