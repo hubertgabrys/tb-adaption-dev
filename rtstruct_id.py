@@ -24,6 +24,7 @@ def ct2id_prefix(comment):
     """Return the prefix for CT based on the comment."""
     ct_prefix_map = {
         "SyntheticCT": "sCT",
+        "Synthetic CT": "sCT",
         "10%": "CT_10",
         "20%": "CT_20",
         "30%": "CT_30",
