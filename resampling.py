@@ -99,6 +99,7 @@ def resample_image_to_resolution(image, new_spacing):
     # Get original spacing and size
     original_spacing = image.GetSpacing()  # Current voxel dimensions
     original_size = image.GetSize()  # Current image size (number of voxels)
+    print("Original spacing: ", original_spacing)
 
     # Calculate the new size based on the new spacing
     # New size (number of voxels) is calculated to preserve physical image dimensions
@@ -128,6 +129,7 @@ def resample_image_to_resolution(image, new_spacing):
 
     # Use supported formats for DICOM
     resampled_image = sitk.Cast(resampled_image, sitk.sitkUInt16)
+    print("resampled_image spacing: ", resampled_image.GetSpacing())
 
     return resampled_image
 
@@ -185,22 +187,17 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
         ("0028|1054", original_CT_pydicom[0x00281054].value),  # Rescale Type
         ("0018|5100", original_CT_pydicom[0x00185100].value),  # Patient Position
         ("0020|0052", original_CT_pydicom[0x00200052].value),  # Frame of Reference UID
-        ("0008|0023", original_CT_pydicom[0x00080023].value),  # Image date
+        # ("0008|0023", original_CT_pydicom[0x00080023].value),  # Image date
         ("0008|0030", original_CT_pydicom[0x00080030].value),  # Study time
         ("0008|0031", original_CT_pydicom[0x00080031].value),  # Series time
         ("0008|0080", original_CT_pydicom[0x00080080].value),  # Institution
-        ("0008|1030", original_CT_pydicom[0x00081030].value),  # Study description
-        ("0018|0015", original_CT_pydicom[0x00180015].value),  # Body part
+        # ("0008|1030", original_CT_pydicom[0x00081030].value),  # Study description
+        # ("0018|0015", original_CT_pydicom[0x00180015].value),  # Body part
         ("0020|0011", original_CT_pydicom[0x00200011].value),  # Series number
-        ("0020|0060", original_CT_pydicom[0x00200060].value),  # Laterality
-        # ("0008|1010", original_CT_pydicom[0x00081010].value),  # Station Name
-        # ("0021|0010", original_CT_pydicom[0x00210010].value),  # Private Creator Data Element
-
-        # MR Sola doesn't have serial number so we hardcode 0
-        # It needs to match the data in Aria RT Administration and Beam configuration
-        ("0008|0070", "Siemens Healthineers"),  # Manufacturer
-        ("0008|1090", "MR MAGNETOM Sola"),  # Manufacturer model name
-        ("0018|1000", "0"),  # Device Serial Number
+        # ("0020|0060", original_CT_pydicom[0x00200060].value),  # Laterality
+        ("0008|0070", "Siemens"),  # Manufacturer
+        ("0008|1090", "Freemax"),  # Manufacturer model name
+        ("0018|1000", "206207"),  # Device Serial Number
 
     ]
 
