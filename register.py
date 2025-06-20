@@ -408,11 +408,21 @@ class MultiViewOverlay:
         )
 
         # alpha slider (overlay blend)
-        slider_ax = self.fig.add_axes([0.25, 0.05, 0.5, 0.03])
+        slider_ax = self.fig.add_axes([0.25, 0.09, 0.5, 0.03])
         self.slider_alpha = Slider(slider_ax, 'Overlay', 0.0, 1.0, valinit=self.alpha)
         self.slider_alpha.on_changed(self.update_alpha)
 
-        # shift sliders
+        # shift sliders (Y above Z)
+        shift_ax_y = self.fig.add_axes([0.25, 0.05, 0.5, 0.03])
+        self.slider_shift_y = Slider(
+            shift_ax_y,
+            'Y Shift (slices)',
+            -max_shift_y, max_shift_y,
+            valinit=self.shift_y,
+            valstep=1
+        )
+        self.slider_shift_y.on_changed(self.update_shift_y)
+
         shift_ax_z = self.fig.add_axes([0.25, 0.01, 0.5, 0.03])
         self.slider_shift_z = Slider(
             shift_ax_z,
@@ -422,16 +432,6 @@ class MultiViewOverlay:
             valstep=1
         )
         self.slider_shift_z.on_changed(self.update_shift_z)
-
-        shift_ax_y = self.fig.add_axes([0.25, 0.09, 0.5, 0.03])
-        self.slider_shift_y = Slider(
-            shift_ax_y,
-            'Y Shift (slices)',
-            -max_shift_y, max_shift_y,
-            valinit=self.shift_y,
-            valstep=1
-        )
-        self.slider_shift_y.on_changed(self.update_shift_y)
 
         self.fig.canvas.mpl_connect('scroll_event', self.on_scroll)
         plt.show()
@@ -452,7 +452,7 @@ class MultiViewOverlay:
         z = np.clip(z, 0, self.fixed.shape[0]-1)
         f_slc = self.fixed[z, :, :]
         m_slc = self.moving[z, :, :]
-        m_slc = np.roll(m_slc, int(self.shift_y), axis=1)
+        m_slc = np.roll(m_slc, int(self.shift_y), axis=0)
         return self.blend_slices(f_slc, m_slc)
 
     def get_coronal_slice(self):
