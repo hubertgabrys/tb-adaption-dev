@@ -1,6 +1,7 @@
 import os
 import sys
 import tkinter as tk
+from tkinter.scrolledtext import ScrolledText
 from pathlib import Path
 
 from preprocessing import (
@@ -15,6 +16,22 @@ from resampling import resample_ct
 from utils import load_environment, check_if_ct_present, find_series_uids
 from segmentation import create_empty_rtstruct
 from copy_structures import copy_structures
+
+
+class ConsoleRedirector:
+    """Redirect writes to a Tkinter text widget."""
+
+    def __init__(self, widget):
+        self.widget = widget
+
+    def write(self, text):
+        self.widget.configure(state="normal")
+        self.widget.insert("end", text)
+        self.widget.see("end")
+        self.widget.configure(state="disabled")
+
+    def flush(self):
+        pass
 
 
 def rename_all_dicom_files(directory_path: str) -> None:
@@ -41,6 +58,17 @@ def main():
 
     root = tk.Tk()
     root.title("MRgTB Preprocessing")
+
+    # Configure grid to accommodate console on the right
+    root.grid_columnconfigure(2, weight=1)
+
+    # Console output widget
+    console = ScrolledText(root, state="disabled", width=80)
+    console.grid(row=0, column=2, rowspan=15, sticky="nsew", padx=(10, 10), pady=10)
+
+    # Redirect stdout and stderr to the console widget
+    sys.stdout = ConsoleRedirector(console)
+    sys.stderr = ConsoleRedirector(console)
 
     # Title label
     lbl_title = tk.Label(root, text="MRgTB Preprocessing", font=("Helvetica", 16))
