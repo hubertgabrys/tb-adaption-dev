@@ -160,10 +160,9 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
     original_CT_pydicom = pydicom.dcmread(dicom_file_paths[0])
 
     writer = sitk.ImageFileWriter()
-    # Use the study/series/frame of reference information given in the meta-data
-    # dictionary and not the automatically generated information from the file IO.
-    # Generate new UIDs for the written files instead of reusing the originals.
-    writer.KeepOriginalImageUIDOff()
+    # Use the UID values explicitly stored in the metadata and do not let
+    # SimpleITK generate new identifiers automatically.
+    writer.KeepOriginalImageUIDOn()
 
     # Copy relevant tags from the original meta-data dictionary (private tags are
     # also accessible).
@@ -225,6 +224,8 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
         )
         #   Instance Number - DICOM uses 1-based numbering
         image_slice.SetMetaData("0020|0013", str(i + 1))
+        #   SOP Instance UID - unique per slice
+        image_slice.SetMetaData("0008|0018", generate_uid())
         # Set slice thickness (assuming uniform thickness)
         image_slice.SetMetaData("0018|0050", f"{spacing_resampled[2]:.6f}")  # Slice Thickness
 
