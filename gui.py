@@ -244,27 +244,12 @@ def main():
                 rigid_transform = None
 
             if rigid_transform:
-                progress_win = tk.Toplevel(root)
-                progress_win.title("Copying Structures")
-                progress_label = tk.Label(progress_win, text="")
-                progress_label.pack(padx=10, pady=(10, 0))
-                progress_bar = ttk.Progressbar(progress_win, length=300, mode="determinate")
-                progress_bar.pack(padx=10, pady=(0, 10))
-
-                def progress_cb(idx, total, name):
-                    progress_bar["maximum"] = total
-                    progress_bar["value"] = idx
-                    progress_label.config(text=name)
-                    progress_win.update_idletasks()
-
                 copy_structures(
                     str(input_dir),
                     patient_id,
                     rtplan_label,
                     rigid_transform,
-                    progress_callback=progress_cb,
                 )
-                progress_win.destroy()
             register_status.config(text="\u2705", fg="green")
         except Exception:
             register_status.config(text="\u274C", fg="red")

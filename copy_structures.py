@@ -132,7 +132,10 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
     # Process ROI contour items only if their Referenced ROI Number (tag 3006,0084)
     # is part of the approved ROI numbers.
     sequence = rtstruct_base.ROIContourSequence
-    iterator = tqdm(sequence, desc="ROIContourSequence") if progress_callback is None else sequence
+    if progress_callback is None:
+        iterator = tqdm(sequence, desc="Copying Structures")
+    else:
+        iterator = sequence
     total = len(sequence)
     for idx, roi_contour in enumerate(iterator, 1):
         # Retrieve the Referenced ROI Number (tag 3006,0084)
@@ -160,6 +163,8 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
         rtstruct_new.ROIContourSequence.append(new_roi_contour)
         if progress_callback:
             progress_callback(idx, total, roi_name)
+        else:
+            iterator.set_postfix_str(roi_name)
 
     # --- Step 3: Copy RT ROI Observations Sequence ---
     # Each observation item is included only if its Referenced ROI Number (tag 3006,0084)
