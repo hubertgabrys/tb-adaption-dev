@@ -183,14 +183,12 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
     # Series DICOM tags to copy
     series_tag_values = [
         ("0008|0005", get_dicom_value(original_CT_pydicom, Tag(0x00080005))),  # Specific Character Set
-        ("0018|0060", ""),  # kVp
-        ("0008|103e", f"{get_dicom_value(original_CT_pydicom, Tag(0x0008103e))} Resampled"),  # Series description
+        ("0018|0060", get_dicom_value(original_CT_pydicom, Tag(0x00180060))),  # kVp
         ("0010|0010", get_dicom_value(original_CT_pydicom, Tag(0x00100010))),  # Patient Name
         ("0010|0020", get_dicom_value(original_CT_pydicom, Tag(0x00100020))),  # Patient ID
         ("0010|0030", get_dicom_value(original_CT_pydicom, Tag(0x00100030))),  # Patient Birth Date
         ("0010|0040", get_dicom_value(original_CT_pydicom, Tag(0x00100040))),  # Patient Sex
         ("0020|000d", get_dicom_value(original_CT_pydicom, Tag(0x0020000d))),  # Study Instance UID, for machine consumption
-        ("0020|000e", new_series_uid),  # Series Instance UID (new)
         ("0020|0010", get_dicom_value(original_CT_pydicom, Tag(0x00200010))),  # Study ID, for human consumption
         ("0008|0020", get_dicom_value(original_CT_pydicom, Tag(0x00080020))),  # Study Date
         ("0008|0021", get_dicom_value(original_CT_pydicom, Tag(0x00080021))),  # Series Date
@@ -209,10 +207,12 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
         ("0018|5100", get_dicom_value(original_CT_pydicom, Tag(0x00185100))),  # Patient Position
         ("0020|0052", get_dicom_value(original_CT_pydicom, Tag(0x00200052))),  # Frame of Reference UID
         ("0008|0080", get_dicom_value(original_CT_pydicom, Tag(0x00080080))),  # Institution
-        ("0008|1030", ""),  # Study description
+        ("0008|1030", get_dicom_value(original_CT_pydicom, Tag(0x00081030))),  # Study description
         ("0020|0011", get_dicom_value(original_CT_pydicom, Tag(0x00200011))),  # Series number
         ("0020|0012", get_dicom_value(original_CT_pydicom, Tag(0x00200012))),  # Acquisition number
         ("0020|1040", get_dicom_value(original_CT_pydicom, Tag(0x00201040))),  # Position reference indicator
+        ("0020|000e", new_series_uid),  # Series Instance UID (new)
+        ("0008|103e", f"{get_dicom_value(original_CT_pydicom, Tag(0x0008103e))} Resampled"),  # Series description
         ("0008|0070", "Siemens"),  # Manufacturer
         ("0008|1090", "Freemax"),  # Manufacturer model name
         ("0018|1000", "206207"),  # Device Serial Number
