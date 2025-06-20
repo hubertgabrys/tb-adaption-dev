@@ -3,7 +3,6 @@ import os
 
 import pydicom
 from pydicom.valuerep import DS
-from tqdm import tqdm
 
 
 def float_to_ds_string(x: float, precision: int = 8) -> DS:
@@ -78,7 +77,7 @@ def read_new_rtstruct(current_directory):
     return rtstruct, rtstruct_filename
 
 
-def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform, progress_callback=None):
+def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform):
     # Read the base and new RTSTRUCT files.
     rtstruct_base = read_base_rtstruct(patient_id, rtplan_label)
     rtstruct_new, rtstruct_new_filename = read_new_rtstruct(current_directory)
@@ -132,12 +131,7 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
     # Process ROI contour items only if their Referenced ROI Number (tag 3006,0084)
     # is part of the approved ROI numbers.
     sequence = rtstruct_base.ROIContourSequence
-    if progress_callback is None:
-        iterator = tqdm(sequence, desc="Copying Structures")
-    else:
-        iterator = sequence
-    total = len(sequence)
-    for idx, roi_contour in enumerate(iterator, 1):
+    for roi_contour in sequence:
         # Retrieve the Referenced ROI Number (tag 3006,0084)
         ref_roi_num = getattr(roi_contour, "ReferencedROINumber", None)
         if ref_roi_num not in approved_roi_numbers:
@@ -161,10 +155,6 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
                     contour.ContourData = [str(v) for v in new_data]
 
         rtstruct_new.ROIContourSequence.append(new_roi_contour)
-        if progress_callback:
-            progress_callback(idx, total, roi_name)
-        else:
-            iterator.set_postfix_str(roi_name)
 
     # --- Step 3: Copy RT ROI Observations Sequence ---
     # Each observation item is included only if its Referenced ROI Number (tag 3006,0084)
