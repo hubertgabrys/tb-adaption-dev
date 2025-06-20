@@ -137,8 +137,6 @@ def main():
                 chk.pack(anchor='w')
                 series_vars[uid] = var
                 checkbox_texts[uid] = text
-                # attach trace to update dropdown when toggled
-                var.trace_add('write', update_dropdown)
 
             # Update dropdown after loading
             update_dropdown()
@@ -171,29 +169,29 @@ def main():
     series_frame.grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=10)
 
 
-    # Clean up button
+    # Delete selected series button
     cleanup_status = tk.Label(root, text="", font=("Helvetica", 14))
 
     def on_cleanup():
         cleanup_status.config(text="\u23F3", fg="orange")  # hourglass
         root.update_idletasks()
         try:
-            # keep only the series with checkboxes ticked
-            uids_to_keep = [uid for uid, var in series_vars.items() if var.get()]
-            for uid, info in list(series_info.items()):
-                if uid not in uids_to_keep:
-                    for fpath in info["files"]:
-                        try:
-                            os.remove(fpath)
-                        except Exception:
-                            pass
+            # delete the series with checkboxes ticked
+            uids_to_delete = [uid for uid, var in series_vars.items() if var.get()]
+            for uid in uids_to_delete:
+                info = series_info.get(uid, {})
+                for fpath in info.get("files", []):
+                    try:
+                        os.remove(fpath)
+                    except Exception:
+                        pass
             cleanup_status.config(text="\u2705", fg="green")
         except Exception:
             cleanup_status.config(text="\u274C", fg="red")
         # refresh displayed series after cleanup
         on_get_images()
 
-    btn_cleanup = tk.Button(root, text="Clean up", command=on_cleanup)
+    btn_cleanup = tk.Button(root, text="Delete selected series", command=on_cleanup)
     btn_cleanup.grid(row=9, column=0, sticky="w", padx=10, pady=(0, 10))
     cleanup_status.grid(row=9, column=1, sticky="w")
 
@@ -207,6 +205,8 @@ def main():
             if check_if_ct_present(str(input_dir)):
                 resample_ct(str(input_dir))
                 resample_status.config(text="\u2705", fg="green")
+                # refresh series list after new sCT is generated
+                on_get_images()
             else:
                 resample_status.config(text="\u274C", fg="red")
         except Exception:
@@ -272,19 +272,19 @@ def main():
     register_progress.grid_remove()
 
     def update_dropdown(*args):
-        # get all selected series
-        selected_uids = [uid for uid, var in series_vars.items() if var.get()]
+        # show all available series in the dropdown
         menu = dropdown["menu"]
         menu.delete(0, 'end')
         selection_map.clear()
-        for uid in selected_uids:
-            text = checkbox_texts.get(uid, series_info[uid]['description'])
+        for uid, info in series_info.items():
+            text = checkbox_texts.get(uid, info['description'])
             selection_map[text] = uid
             menu.add_command(label=text, command=tk._setit(selected_var, text))
-        # Default to first selection label
-        if selected_uids:
-            first = selected_uids[0]
-            selected_var.set(checkbox_texts[first])
+
+        # Default to first label
+        if series_info:
+            first_uid = next(iter(series_info))
+            selected_var.set(checkbox_texts.get(first_uid, series_info[first_uid]['description']))
         else:
             selected_var.set('')
 
