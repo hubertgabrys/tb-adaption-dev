@@ -5,8 +5,20 @@ import time
 import SimpleITK as sitk
 import pydicom
 from pydicom.uid import generate_uid
+from pydicom.tag import Tag
 
 from utils import get_datetime
+
+
+def get_dicom_value(ds, tag, default=""):
+    """Return the value of a DICOM tag, or a default if missing/empty."""
+    element = ds.get(tag)
+    if element is None:
+        return default
+    value = element.value
+    if value in (None, "", b""):
+        return default
+    return value
 
 
 def move_original_ct(folder_path):
@@ -170,37 +182,37 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
     new_series_uid = generate_uid()
     # Series DICOM tags to copy
     series_tag_values = [
-        ("0008|0005", original_CT_pydicom[0x00080005].value),  # Specific Character Set
+        ("0008|0005", get_dicom_value(original_CT_pydicom, Tag(0x00080005))),  # Specific Character Set
         ("0018|0060", ""),  # kVp
-        ("0008|103e", f"{original_CT_pydicom[0x0008103e].value} Resampled"),  # Series description
-        ("0010|0010", original_CT_pydicom[0x00100010].value),  # Patient Name
-        ("0010|0020", original_CT_pydicom[0x00100020].value),  # Patient ID
-        ("0010|0030", original_CT_pydicom[0x00100030].value),  # Patient Birth Date
-        ("0010|0040", original_CT_pydicom[0x00100040].value),  # Patient Sex
-        ("0020|000d", original_CT_pydicom[0x0020000d].value),  # Study Instance UID, for machine consumption
+        ("0008|103e", f"{get_dicom_value(original_CT_pydicom, Tag(0x0008103e))} Resampled"),  # Series description
+        ("0010|0010", get_dicom_value(original_CT_pydicom, Tag(0x00100010))),  # Patient Name
+        ("0010|0020", get_dicom_value(original_CT_pydicom, Tag(0x00100020))),  # Patient ID
+        ("0010|0030", get_dicom_value(original_CT_pydicom, Tag(0x00100030))),  # Patient Birth Date
+        ("0010|0040", get_dicom_value(original_CT_pydicom, Tag(0x00100040))),  # Patient Sex
+        ("0020|000d", get_dicom_value(original_CT_pydicom, Tag(0x0020000d))),  # Study Instance UID, for machine consumption
         ("0020|000e", new_series_uid),  # Series Instance UID (new)
-        ("0020|0010", original_CT_pydicom[0x00200010].value),  # Study ID, for human consumption
-        ("0008|0020", original_CT_pydicom[0x00080020].value),  # Study Date
-        ("0008|0021", original_CT_pydicom[0x00080021].value),  # Series Date
-        ("0008|0022", original_CT_pydicom[0x00080022].value),  # Acquisition Date
-        ("0008|0030", original_CT_pydicom[0x00080030].value),  # Study Time
-        ("0008|0031", original_CT_pydicom[0x00080031].value),  # Series time
-        ("0008|0032", original_CT_pydicom[0x00080032].value),  # Acquisition time
-        ("0008|0050", original_CT_pydicom[0x00080050].value),  # Accession Number
-        ("0008|0060", original_CT_pydicom[0x00080060].value),  # Modality
-        ("0008|0064", original_CT_pydicom[0x00080064].value),  # Conversion Type
-        ("0028|1050", original_CT_pydicom[0x00281050].value),  # Window center
-        ("0028|1051", original_CT_pydicom[0x00281051].value),  # Window width
-        ("0028|1052", original_CT_pydicom[0x00281052].value),  # Rescale Intercept
-        ("0028|1053", original_CT_pydicom[0x00281053].value),  # Rescale Slope
-        ("0028|1054", original_CT_pydicom[0x00281054].value),  # Rescale Type
-        ("0018|5100", original_CT_pydicom[0x00185100].value),  # Patient Position
-        ("0020|0052", original_CT_pydicom[0x00200052].value),  # Frame of Reference UID
-        ("0008|0080", original_CT_pydicom[0x00080080].value),  # Institution
+        ("0020|0010", get_dicom_value(original_CT_pydicom, Tag(0x00200010))),  # Study ID, for human consumption
+        ("0008|0020", get_dicom_value(original_CT_pydicom, Tag(0x00080020))),  # Study Date
+        ("0008|0021", get_dicom_value(original_CT_pydicom, Tag(0x00080021))),  # Series Date
+        ("0008|0022", get_dicom_value(original_CT_pydicom, Tag(0x00080022))),  # Acquisition Date
+        ("0008|0030", get_dicom_value(original_CT_pydicom, Tag(0x00080030))),  # Study Time
+        ("0008|0031", get_dicom_value(original_CT_pydicom, Tag(0x00080031))),  # Series time
+        ("0008|0032", get_dicom_value(original_CT_pydicom, Tag(0x00080032))),  # Acquisition time
+        ("0008|0050", get_dicom_value(original_CT_pydicom, Tag(0x00080050))),  # Accession Number
+        ("0008|0060", get_dicom_value(original_CT_pydicom, Tag(0x00080060))),  # Modality
+        ("0008|0064", get_dicom_value(original_CT_pydicom, Tag(0x00080064))),  # Conversion Type
+        ("0028|1050", get_dicom_value(original_CT_pydicom, Tag(0x00281050))),  # Window center
+        ("0028|1051", get_dicom_value(original_CT_pydicom, Tag(0x00281051))),  # Window width
+        ("0028|1052", get_dicom_value(original_CT_pydicom, Tag(0x00281052))),  # Rescale Intercept
+        ("0028|1053", get_dicom_value(original_CT_pydicom, Tag(0x00281053))),  # Rescale Slope
+        ("0028|1054", get_dicom_value(original_CT_pydicom, Tag(0x00281054))),  # Rescale Type
+        ("0018|5100", get_dicom_value(original_CT_pydicom, Tag(0x00185100))),  # Patient Position
+        ("0020|0052", get_dicom_value(original_CT_pydicom, Tag(0x00200052))),  # Frame of Reference UID
+        ("0008|0080", get_dicom_value(original_CT_pydicom, Tag(0x00080080))),  # Institution
         ("0008|1030", ""),  # Study description
-        ("0020|0011", original_CT_pydicom[0x00200011].value),  # Series number
-        ("0020|0012", original_CT_pydicom[0x00200012].value),  # Acquisition number
-        ("0020|1040", original_CT_pydicom[0x00201040].value),  # Position reference indicator
+        ("0020|0011", get_dicom_value(original_CT_pydicom, Tag(0x00200011))),  # Series number
+        ("0020|0012", get_dicom_value(original_CT_pydicom, Tag(0x00200012))),  # Acquisition number
+        ("0020|1040", get_dicom_value(original_CT_pydicom, Tag(0x00201040))),  # Position reference indicator
         ("0008|0070", "Siemens"),  # Manufacturer
         ("0008|1090", "Freemax"),  # Manufacturer model name
         ("0018|1000", "206207"),  # Device Serial Number
@@ -242,7 +254,7 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
 
         # This will fix issues with German special characters in patient name
         ds = pydicom.dcmread(filename_save)
-        ds.PatientName = original_CT_pydicom[0x00100010].value
+        ds.PatientName = get_dicom_value(original_CT_pydicom, Tag(0x00100010))
         ds.save_as(filename_save)
 
 
