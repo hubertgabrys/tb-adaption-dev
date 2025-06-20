@@ -181,13 +181,16 @@ def main():
 
     # Register button
     register_status = tk.Label(root, text="", font=("Helvetica", 14))
-    register_progress = ttk.Progressbar(root, length=200, mode="determinate")
 
     def on_register():
         register_status.config(text="\u23F3", fg="orange")
         root.update_idletasks()
-        register_progress["value"] = 0
-        register_progress.grid()
+
+        progress_win = tk.Toplevel(root)
+        progress_win.title("Registering")
+        progress_bar = ttk.Progressbar(progress_win, length=300, mode="determinate")
+        progress_bar.pack(padx=20, pady=20)
+
         try:
             dicom_series = find_series_uids(str(input_dir))
             for series_uid, filepaths in dicom_series.items():
@@ -203,9 +206,9 @@ def main():
 
             if rigid_transform:
                 def progress_cb(idx, total):
-                    register_progress["maximum"] = total
-                    register_progress["value"] = idx
-                    root.update_idletasks()
+                    progress_bar["maximum"] = total
+                    progress_bar["value"] = idx
+                    progress_win.update_idletasks()
 
                 copy_structures(
                     str(input_dir),
@@ -218,13 +221,11 @@ def main():
         except Exception:
             register_status.config(text="\u274C", fg="red")
         finally:
-            register_progress.grid_remove()
+            progress_win.destroy()
 
     btn_register = tk.Button(root, text="Register", command=on_register)
     btn_register.grid(row=9, column=0, sticky="w", padx=10, pady=(0, 10))
     register_status.grid(row=9, column=1, sticky="w")
-    register_progress.grid(row=10, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
-    register_progress.grid_remove()
 
     def update_dropdown(*args):
         # get all selected series
