@@ -78,14 +78,14 @@ def main():
     lbl_patient = tk.Label(
         root,
         text=f"PATIENT_ID: {patient_id}",
-        font=("Helvetica", 14),
+        font=("Helvetica", 12),
     )
     lbl_patient.grid(row=1, column=0, columnspan=2, sticky="w", padx=10)
 
     lbl_rtplan = tk.Label(
         root,
         text=f"RTPLAN_LABEL: {rtplan_label}",
-        font=("Helvetica", 14),
+        font=("Helvetica", 12),
     )
     lbl_rtplan.grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
