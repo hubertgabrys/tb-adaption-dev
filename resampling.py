@@ -4,6 +4,7 @@ import time
 
 import SimpleITK as sitk
 import pydicom
+from pydicom.uid import generate_uid
 
 from utils import get_datetime
 
@@ -160,11 +161,14 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
 
     writer = sitk.ImageFileWriter()
     # Use the study/series/frame of reference information given in the meta-data
-    # dictionary and not the automatically generated information from the file IO
-    writer.KeepOriginalImageUIDOn()
+    # dictionary and not the automatically generated information from the file IO.
+    # Generate new UIDs for the written files instead of reusing the originals.
+    writer.KeepOriginalImageUIDOff()
 
     # Copy relevant tags from the original meta-data dictionary (private tags are
     # also accessible).
+    # Generate a new Series Instance UID for the resampled output
+    new_series_uid = generate_uid()
     # Series DICOM tags to copy
     series_tag_values = [
         ("0008|0005", original_CT_pydicom[0x00080005].value),  # Specific Character Set
@@ -175,7 +179,7 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
         ("0010|0030", original_CT_pydicom[0x00100030].value),  # Patient Birth Date
         ("0010|0040", original_CT_pydicom[0x00100040].value),  # Patient Sex
         ("0020|000d", original_CT_pydicom[0x0020000d].value),  # Study Instance UID, for machine consumption
-        ("0020|000e", original_CT_pydicom[0x0020000e].value),  # Series Instance UID
+        ("0020|000e", new_series_uid),  # Series Instance UID (new)
         ("0020|0010", original_CT_pydicom[0x00200010].value),  # Study ID, for human consumption
         ("0008|0020", original_CT_pydicom[0x00080020].value),  # Study Date
         ("0008|0030", original_CT_pydicom[0x00080030].value),  # Study Time
