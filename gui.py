@@ -170,13 +170,6 @@ def main():
     series_frame = tk.Frame(root)
     series_frame.grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=10)
 
-    # Dropdown menu for registration series
-    selected_var = tk.StringVar()
-    selection_map = {}
-
-    tk.Label(root, text="Select Series for Matching").grid(row=7, column=0, columnspan=2, sticky="w", padx=10)
-    dropdown = tk.OptionMenu(root, selected_var, '')
-    dropdown.grid(row=8, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
     # Clean up button
     cleanup_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -223,6 +216,14 @@ def main():
     btn_resample.grid(row=10, column=0, sticky="w", padx=10, pady=(0, 10))
     resample_status.grid(row=10, column=1, sticky="w")
 
+    # Dropdown menu for registration series
+    selected_var = tk.StringVar()
+    selection_map = {}
+
+    tk.Label(root, text="Select Series for Matching").grid(row=11, column=0, columnspan=2, sticky="w", padx=10)
+    dropdown = tk.OptionMenu(root, selected_var, '')
+    dropdown.grid(row=12, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+
     # Register button
     register_status = tk.Label(root, text="", font=("Helvetica", 14))
     register_progress = ttk.Progressbar(root, length=200, mode="determinate")
@@ -265,9 +266,9 @@ def main():
             register_progress.grid_remove()
 
     btn_register = tk.Button(root, text="Register", command=on_register)
-    btn_register.grid(row=11, column=0, sticky="w", padx=10, pady=(0, 10))
-    register_status.grid(row=11, column=1, sticky="w")
-    register_progress.grid(row=12, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    btn_register.grid(row=13, column=0, sticky="w", padx=10, pady=(0, 10))
+    register_status.grid(row=13, column=1, sticky="w")
+    register_progress.grid(row=14, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
     register_progress.grid_remove()
 
     def update_dropdown(*args):
