@@ -264,6 +264,8 @@ def main():
             register_status.config(text="\u274C", fg="red")
         finally:
             register_progress.grid_remove()
+            # refresh displayed series after cleanup
+            on_get_images()
 
     btn_register = tk.Button(root, text="Register", command=on_register)
     btn_register.grid(row=13, column=0, sticky="w", padx=10, pady=(0, 10))
