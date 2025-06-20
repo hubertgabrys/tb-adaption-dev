@@ -374,7 +374,8 @@ class MultiViewOverlay:
         max_shift_z = self.fixed.shape[0] // 2
         max_shift_y = self.fixed.shape[1] // 2
 
-        self.fig, self.axes = plt.subplots(1, 3, figsize=(15, 5))
+        # show larger views for easier inspection
+        self.fig, self.axes = plt.subplots(1, 3, figsize=(18, 6))
         self.ax_transverse, self.ax_coronal, self.ax_sagittal = self.axes
         self.scroll_speed = 5
 
