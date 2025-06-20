@@ -75,12 +75,19 @@ def main():
     lbl_title.grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=10)
 
     # Patient information displayed under the title
-    lbl_info = tk.Label(
+    lbl_patient = tk.Label(
         root,
-        text=f"PATIENT_ID: {patient_id}  RTPLAN_LABEL: {rtplan_label}",
+        text=f"PATIENT_ID: {patient_id}",
         font=("Helvetica", 14),
     )
-    lbl_info.grid(row=1, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    lbl_patient.grid(row=1, column=0, columnspan=2, sticky="w", padx=10)
+
+    lbl_rtplan = tk.Label(
+        root,
+        text=f"RTPLAN_LABEL: {rtplan_label}",
+        font=("Helvetica", 14),
+    )
+    lbl_rtplan.grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
     # Get Base Plan button with status label
     baseplan_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -95,8 +102,8 @@ def main():
             baseplan_status.config(text="\u274C", fg="red")
 
     btn_baseplan = tk.Button(root, text="Get Base Plan", command=on_get_base_plan)
-    btn_baseplan.grid(row=2, column=0, sticky="w", padx=10)
-    baseplan_status.grid(row=2, column=1, sticky="w")
+    btn_baseplan.grid(row=3, column=0, sticky="w", padx=10)
+    baseplan_status.grid(row=3, column=1, sticky="w")
 
     # Get Imaging button with status label
     images_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -140,19 +147,19 @@ def main():
             images_status.config(text="\u274C", fg="red")
 
     btn_images = tk.Button(root, text="Get Imaging", command=on_get_images)
-    btn_images.grid(row=3, column=0, sticky="w", padx=10, pady=(0, 5))
-    images_status.grid(row=3, column=1, sticky="w")
+    btn_images.grid(row=4, column=0, sticky="w", padx=10, pady=(0, 5))
+    images_status.grid(row=4, column=1, sticky="w")
 
     # Imaging series frame (initially empty)
     series_frame = tk.Frame(root)
-    series_frame.grid(row=4, column=0, columnspan=2, sticky="w", padx=10, pady=10)
+    series_frame.grid(row=5, column=0, columnspan=2, sticky="w", padx=10, pady=10)
 
     # Dropdown menu for registration series
     selected_var = tk.StringVar()
     selection_map = {}
-    tk.Label(root, text="Select Series for Matching").grid(row=5, column=0, columnspan=2, sticky="w", padx=10)
+    tk.Label(root, text="Select Series for Matching").grid(row=6, column=0, columnspan=2, sticky="w", padx=10)
     dropdown = tk.OptionMenu(root, selected_var, '')
-    dropdown.grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    dropdown.grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
     # Backup button under the dropdown
     backup_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -167,8 +174,8 @@ def main():
             backup_status.config(text="\u274C", fg="red")
 
     btn_backup = tk.Button(root, text="Create backup", command=on_backup)
-    btn_backup.grid(row=7, column=0, sticky="w", padx=10)
-    backup_status.grid(row=7, column=1, sticky="w")
+    btn_backup.grid(row=8, column=0, sticky="w", padx=10)
+    backup_status.grid(row=8, column=1, sticky="w")
 
     # Clean up button
     cleanup_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -193,8 +200,8 @@ def main():
         on_get_images()
 
     btn_cleanup = tk.Button(root, text="Clean up", command=on_cleanup)
-    btn_cleanup.grid(row=8, column=0, sticky="w", padx=10, pady=(0, 10))
-    cleanup_status.grid(row=8, column=1, sticky="w")
+    btn_cleanup.grid(row=9, column=0, sticky="w", padx=10, pady=(0, 10))
+    cleanup_status.grid(row=9, column=1, sticky="w")
 
     # Resample button
     resample_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -212,8 +219,8 @@ def main():
             resample_status.config(text="\u274C", fg="red")
 
     btn_resample = tk.Button(root, text="Resample", command=on_resample)
-    btn_resample.grid(row=9, column=0, sticky="w", padx=10, pady=(0, 10))
-    resample_status.grid(row=9, column=1, sticky="w")
+    btn_resample.grid(row=10, column=0, sticky="w", padx=10, pady=(0, 10))
+    resample_status.grid(row=10, column=1, sticky="w")
 
     # Register button
     register_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -257,9 +264,9 @@ def main():
             register_progress.grid_remove()
 
     btn_register = tk.Button(root, text="Register", command=on_register)
-    btn_register.grid(row=10, column=0, sticky="w", padx=10, pady=(0, 10))
-    register_status.grid(row=10, column=1, sticky="w")
-    register_progress.grid(row=11, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    btn_register.grid(row=11, column=0, sticky="w", padx=10, pady=(0, 10))
+    register_status.grid(row=11, column=1, sticky="w")
+    register_progress.grid(row=12, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
     register_progress.grid_remove()
 
     def update_dropdown(*args):
