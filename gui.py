@@ -226,13 +226,10 @@ def main():
 
     # Register button
     register_status = tk.Label(root, text="", font=("Helvetica", 14))
-    register_progress = ttk.Progressbar(root, length=200, mode="determinate")
 
     def on_register():
         register_status.config(text="\u23F3", fg="orange")
         root.update_idletasks()
-        register_progress["value"] = 0
-        register_progress.grid()
         try:
             dicom_series = find_series_uids(str(input_dir))
             for series_uid, filepaths in dicom_series.items():
@@ -247,31 +244,22 @@ def main():
                 rigid_transform = None
 
             if rigid_transform:
-                def progress_cb(idx, total):
-                    register_progress["maximum"] = total
-                    register_progress["value"] = idx
-                    root.update_idletasks()
-
                 copy_structures(
                     str(input_dir),
                     patient_id,
                     rtplan_label,
                     rigid_transform,
-                    progress_callback=progress_cb,
                 )
             register_status.config(text="\u2705", fg="green")
         except Exception:
             register_status.config(text="\u274C", fg="red")
         finally:
-            register_progress.grid_remove()
             # refresh displayed series after cleanup
             on_get_images()
 
     btn_register = tk.Button(root, text="Register", command=on_register)
     btn_register.grid(row=13, column=0, sticky="w", padx=10, pady=(0, 10))
     register_status.grid(row=13, column=1, sticky="w")
-    register_progress.grid(row=14, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
-    register_progress.grid_remove()
 
     def update_dropdown(*args):
         # show all available series in the dropdown
