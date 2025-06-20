@@ -127,8 +127,9 @@ def resample_image_to_resolution(image, new_spacing):
     # Resample the image
     resampled_image = resampler.Execute(image)
 
-    # Use supported formats for DICOM
-    resampled_image = sitk.Cast(resampled_image, sitk.sitkUInt16)
+    # Preserve the original pixel type when casting to avoid HU wrap-around
+    # issues when saving the resampled slices as DICOM.
+    resampled_image = sitk.Cast(resampled_image, image.GetPixelID())
     print("resampled_image spacing: ", resampled_image.GetSpacing())
 
     return resampled_image
@@ -218,8 +219,8 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
             "0020|0032",
             "\\".join(map(str, resampled_CT.TransformIndexToPhysicalPoint((0, 0, i)))),
         )
-        #   Instance Number
-        image_slice.SetMetaData("0020|0013", str(i))
+        #   Instance Number - DICOM uses 1-based numbering
+        image_slice.SetMetaData("0020|0013", str(i + 1))
         # Set slice thickness (assuming uniform thickness)
         image_slice.SetMetaData("0018|0050", f"{spacing_resampled[2]:.6f}")  # Slice Thickness
 
