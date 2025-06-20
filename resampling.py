@@ -171,11 +171,8 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
     # Series DICOM tags to copy
     series_tag_values = [
         ("0008|0005", original_CT_pydicom[0x00080005].value),  # Specific Character Set
-        ("0018|0060", original_CT_pydicom[0x00180060].value),  # kVp
-        (
-            "0008|103e",
-            f"{original_CT_pydicom[0x0008103e].value} Resampled",
-        ),  # Series description
+        ("0018|0060", ""),  # kVp
+        ("0008|103e", f"{original_CT_pydicom[0x0008103e].value} Resampled"),  # Series description
         ("0010|0010", original_CT_pydicom[0x00100010].value),  # Patient Name
         ("0010|0020", original_CT_pydicom[0x00100020].value),  # Patient ID
         ("0010|0030", original_CT_pydicom[0x00100030].value),  # Patient Birth Date
@@ -184,9 +181,14 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
         ("0020|000e", new_series_uid),  # Series Instance UID (new)
         ("0020|0010", original_CT_pydicom[0x00200010].value),  # Study ID, for human consumption
         ("0008|0020", original_CT_pydicom[0x00080020].value),  # Study Date
+        ("0008|0021", original_CT_pydicom[0x00080021].value),  # Series Date
+        ("0008|0022", original_CT_pydicom[0x00080022].value),  # Acquisition Date
         ("0008|0030", original_CT_pydicom[0x00080030].value),  # Study Time
+        ("0008|0031", original_CT_pydicom[0x00080031].value),  # Series time
+        ("0008|0032", original_CT_pydicom[0x00080032].value),  # Acquisition time
         ("0008|0050", original_CT_pydicom[0x00080050].value),  # Accession Number
         ("0008|0060", original_CT_pydicom[0x00080060].value),  # Modality
+        ("0008|0064", original_CT_pydicom[0x00080064].value),  # Conversion Type
         ("0028|1050", original_CT_pydicom[0x00281050].value),  # Window center
         ("0028|1051", original_CT_pydicom[0x00281051].value),  # Window width
         ("0028|1052", original_CT_pydicom[0x00281052].value),  # Rescale Intercept
@@ -194,14 +196,11 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
         ("0028|1054", original_CT_pydicom[0x00281054].value),  # Rescale Type
         ("0018|5100", original_CT_pydicom[0x00185100].value),  # Patient Position
         ("0020|0052", original_CT_pydicom[0x00200052].value),  # Frame of Reference UID
-        # ("0008|0023", original_CT_pydicom[0x00080023].value),  # Image date
-        ("0008|0030", original_CT_pydicom[0x00080030].value),  # Study time
-        ("0008|0031", original_CT_pydicom[0x00080031].value),  # Series time
         ("0008|0080", original_CT_pydicom[0x00080080].value),  # Institution
-        # ("0008|1030", original_CT_pydicom[0x00081030].value),  # Study description
-        # ("0018|0015", original_CT_pydicom[0x00180015].value),  # Body part
+        ("0008|1030", ""),  # Study description
         ("0020|0011", original_CT_pydicom[0x00200011].value),  # Series number
-        # ("0020|0060", original_CT_pydicom[0x00200060].value),  # Laterality
+        ("0020|0012", original_CT_pydicom[0x00200012].value),  # Acquisition number
+        ("0020|1040", original_CT_pydicom[0x00201040].value),  # Position reference indicator
         ("0008|0070", "Siemens"),  # Manufacturer
         ("0008|1090", "Freemax"),  # Manufacturer model name
         ("0018|1000", "206207"),  # Device Serial Number
