@@ -172,7 +172,10 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
     series_tag_values = [
         ("0008|0005", original_CT_pydicom[0x00080005].value),  # Specific Character Set
         ("0018|0060", original_CT_pydicom[0x00180060].value),  # kVp
-        ("0008|103e", original_CT_pydicom[0x0008103e].value),  # Series description
+        (
+            "0008|103e",
+            f"{original_CT_pydicom[0x0008103e].value} Resampled",
+        ),  # Series description
         ("0010|0010", original_CT_pydicom[0x00100010].value),  # Patient Name
         ("0010|0020", original_CT_pydicom[0x00100020].value),  # Patient ID
         ("0010|0030", original_CT_pydicom[0x00100030].value),  # Patient Birth Date
