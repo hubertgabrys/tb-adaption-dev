@@ -4,6 +4,7 @@ import time
 
 import SimpleITK as sitk
 import pydicom
+from pydicom.uid import generate_uid
 
 from utils import get_datetime
 
@@ -127,8 +128,9 @@ def resample_image_to_resolution(image, new_spacing):
     # Resample the image
     resampled_image = resampler.Execute(image)
 
-    # Use supported formats for DICOM
-    resampled_image = sitk.Cast(resampled_image, sitk.sitkUInt16)
+    # Preserve the original pixel type when casting to avoid HU wrap-around
+    # issues when saving the resampled slices as DICOM.
+    resampled_image = sitk.Cast(resampled_image, image.GetPixelID())
     print("resampled_image spacing: ", resampled_image.GetSpacing())
 
     return resampled_image
@@ -158,23 +160,28 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
     original_CT_pydicom = pydicom.dcmread(dicom_file_paths[0])
 
     writer = sitk.ImageFileWriter()
-    # Use the study/series/frame of reference information given in the meta-data
-    # dictionary and not the automatically generated information from the file IO
+    # Use the UID values explicitly stored in the metadata and do not let
+    # SimpleITK generate new identifiers automatically.
     writer.KeepOriginalImageUIDOn()
 
     # Copy relevant tags from the original meta-data dictionary (private tags are
     # also accessible).
+    # Generate a new Series Instance UID for the resampled output
+    new_series_uid = generate_uid()
     # Series DICOM tags to copy
     series_tag_values = [
         ("0008|0005", original_CT_pydicom[0x00080005].value),  # Specific Character Set
         ("0018|0060", original_CT_pydicom[0x00180060].value),  # kVp
-        ("0008|103e", original_CT_pydicom[0x0008103e].value),  # Series description
+        (
+            "0008|103e",
+            f"{original_CT_pydicom[0x0008103e].value} Resampled",
+        ),  # Series description
         ("0010|0010", original_CT_pydicom[0x00100010].value),  # Patient Name
         ("0010|0020", original_CT_pydicom[0x00100020].value),  # Patient ID
         ("0010|0030", original_CT_pydicom[0x00100030].value),  # Patient Birth Date
         ("0010|0040", original_CT_pydicom[0x00100040].value),  # Patient Sex
         ("0020|000d", original_CT_pydicom[0x0020000d].value),  # Study Instance UID, for machine consumption
-        ("0020|000e", original_CT_pydicom[0x0020000e].value),  # Series Instance UID
+        ("0020|000e", new_series_uid),  # Series Instance UID (new)
         ("0020|0010", original_CT_pydicom[0x00200010].value),  # Study ID, for human consumption
         ("0008|0020", original_CT_pydicom[0x00080020].value),  # Study Date
         ("0008|0030", original_CT_pydicom[0x00080030].value),  # Study Time
@@ -218,8 +225,10 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
             "0020|0032",
             "\\".join(map(str, resampled_CT.TransformIndexToPhysicalPoint((0, 0, i)))),
         )
-        #   Instance Number
-        image_slice.SetMetaData("0020|0013", str(i))
+        #   Instance Number - DICOM uses 1-based numbering
+        image_slice.SetMetaData("0020|0013", str(i + 1))
+        #   SOP Instance UID - unique per slice
+        image_slice.SetMetaData("0008|0018", generate_uid())
         # Set slice thickness (assuming uniform thickness)
         image_slice.SetMetaData("0018|0050", f"{spacing_resampled[2]:.6f}")  # Slice Thickness
 
