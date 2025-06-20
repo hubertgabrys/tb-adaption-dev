@@ -150,13 +150,6 @@ def main():
     btn_images.grid(row=4, column=0, sticky="w", padx=10, pady=(0, 5))
     images_status.grid(row=4, column=1, sticky="w")
 
-    # Imaging series frame (initially empty)
-    series_frame = tk.Frame(root)
-    series_frame.grid(row=5, column=0, columnspan=2, sticky="w", padx=10, pady=10)
-
-    # Dropdown menu for registration series
-    selected_var = tk.StringVar()
-    selection_map = {}
     # Backup button (create backup of input directory)
     backup_status = tk.Label(root, text="", font=("Helvetica", 14))
 
@@ -170,8 +163,16 @@ def main():
             backup_status.config(text="\u274C", fg="red")
 
     btn_backup = tk.Button(root, text="Create backup", command=on_backup)
-    btn_backup.grid(row=6, column=0, sticky="w", padx=10)
-    backup_status.grid(row=6, column=1, sticky="w")
+    btn_backup.grid(row=5, column=0, sticky="w", padx=10)
+    backup_status.grid(row=5, column=1, sticky="w")
+
+    # Imaging series frame (initially empty)
+    series_frame = tk.Frame(root)
+    series_frame.grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=10)
+
+    # Dropdown menu for registration series
+    selected_var = tk.StringVar()
+    selection_map = {}
 
     tk.Label(root, text="Select Series for Matching").grid(row=7, column=0, columnspan=2, sticky="w", padx=10)
     dropdown = tk.OptionMenu(root, selected_var, '')
