@@ -157,11 +157,7 @@ def main():
     # Dropdown menu for registration series
     selected_var = tk.StringVar()
     selection_map = {}
-    tk.Label(root, text="Select Series for Matching").grid(row=6, column=0, columnspan=2, sticky="w", padx=10)
-    dropdown = tk.OptionMenu(root, selected_var, '')
-    dropdown.grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
-
-    # Backup button under the dropdown
+    # Backup button (create backup of input directory)
     backup_status = tk.Label(root, text="", font=("Helvetica", 14))
 
     def on_backup():
@@ -174,8 +170,12 @@ def main():
             backup_status.config(text="\u274C", fg="red")
 
     btn_backup = tk.Button(root, text="Create backup", command=on_backup)
-    btn_backup.grid(row=8, column=0, sticky="w", padx=10)
-    backup_status.grid(row=8, column=1, sticky="w")
+    btn_backup.grid(row=6, column=0, sticky="w", padx=10)
+    backup_status.grid(row=6, column=1, sticky="w")
+
+    tk.Label(root, text="Select Series for Matching").grid(row=7, column=0, columnspan=2, sticky="w", padx=10)
+    dropdown = tk.OptionMenu(root, selected_var, '')
+    dropdown.grid(row=8, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
     # Clean up button
     cleanup_status = tk.Label(root, text="", font=("Helvetica", 14))
