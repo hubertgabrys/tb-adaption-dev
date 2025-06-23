@@ -4,6 +4,8 @@ import tkinter as tk
 from tkinter.scrolledtext import ScrolledText
 from pathlib import Path
 
+import pydicom
+
 from preprocessing import (
     list_imaging_series,
     zip_directory,
@@ -44,6 +46,21 @@ def rename_all_dicom_files(directory_path: str) -> None:
                 pass
 
 
+def get_patient_name(directory_path: str) -> str:
+    """Return the PatientName from the first DICOM file found in directory_path."""
+    for root_dir, _, files in os.walk(directory_path):
+        for fname in files:
+            fpath = os.path.join(root_dir, fname)
+            try:
+                ds = pydicom.dcmread(fpath, stop_before_pixels=True, force=True)
+                name = getattr(ds, "PatientName", None)
+                if name:
+                    return str(name)
+            except Exception:
+                pass
+    return ""
+
+
 def main():
     load_environment(".env")
     try:
@@ -55,6 +72,7 @@ def main():
         sys.exit(1)
 
     input_dir = Path(os.environ.get("INPUT_DIR")) / patient_id
+    patient_name = get_patient_name(str(input_dir))
 
     root = tk.Tk()
     root.title("MRgTB Preprocessing")
@@ -64,7 +82,7 @@ def main():
 
     # Console output widget
     console = ScrolledText(root, state="disabled", width=80)
-    console.grid(row=0, column=2, rowspan=15, sticky="nsew", padx=(10, 10), pady=10)
+    console.grid(row=0, column=2, rowspan=16, sticky="nsew", padx=(10, 10), pady=10)
 
     # Redirect stdout and stderr to the console widget
     sys.stdout = ConsoleRedirector(console)
@@ -75,19 +93,26 @@ def main():
     lbl_title.grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=10)
 
     # Patient information displayed under the title
+    lbl_name = tk.Label(
+        root,
+        text=f"{patient_name}",
+        font=("Helvetica", 12),
+    )
+    lbl_name.grid(row=1, column=0, columnspan=2, sticky="w", padx=10)
+
     lbl_patient = tk.Label(
         root,
         text=f"{patient_id}",
         font=("Helvetica", 12),
     )
-    lbl_patient.grid(row=1, column=0, columnspan=2, sticky="w", padx=10)
+    lbl_patient.grid(row=2, column=0, columnspan=2, sticky="w", padx=10)
 
     lbl_rtplan = tk.Label(
         root,
         text=f"{rtplan_label}",
         font=("Helvetica", 12),
     )
-    lbl_rtplan.grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    lbl_rtplan.grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
     # Get Base Plan button with status label
     baseplan_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -102,8 +127,8 @@ def main():
             baseplan_status.config(text="\u274C", fg="red")
 
     btn_baseplan = tk.Button(root, text="Get base plan", command=on_get_base_plan)
-    btn_baseplan.grid(row=3, column=0, sticky="w", padx=10)
-    baseplan_status.grid(row=3, column=1, sticky="w")
+    btn_baseplan.grid(row=4, column=0, sticky="w", padx=10)
+    baseplan_status.grid(row=4, column=1, sticky="w")
 
     # Get Imaging button with status label
     images_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -145,8 +170,8 @@ def main():
             images_status.config(text="\u274C", fg="red")
 
     btn_images = tk.Button(root, text="Get imaging", command=on_get_images)
-    btn_images.grid(row=4, column=0, sticky="w", padx=10, pady=(0, 5))
-    images_status.grid(row=4, column=1, sticky="w")
+    btn_images.grid(row=5, column=0, sticky="w", padx=10, pady=(0, 5))
+    images_status.grid(row=5, column=1, sticky="w")
 
     # Backup button (create backup of input directory)
     backup_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -161,12 +186,12 @@ def main():
             backup_status.config(text="\u274C", fg="red")
 
     btn_backup = tk.Button(root, text="Create backup", command=on_backup)
-    btn_backup.grid(row=5, column=0, sticky="w", padx=10)
-    backup_status.grid(row=5, column=1, sticky="w")
+    btn_backup.grid(row=6, column=0, sticky="w", padx=10)
+    backup_status.grid(row=6, column=1, sticky="w")
 
     # Imaging series frame (initially empty)
     series_frame = tk.Frame(root)
-    series_frame.grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=10)
+    series_frame.grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=10)
 
 
     # Delete selected series button
@@ -192,8 +217,8 @@ def main():
         on_get_images()
 
     btn_cleanup = tk.Button(root, text="Delete selected series", command=on_cleanup)
-    btn_cleanup.grid(row=9, column=0, sticky="w", padx=10, pady=(0, 10))
-    cleanup_status.grid(row=9, column=1, sticky="w")
+    btn_cleanup.grid(row=10, column=0, sticky="w", padx=10, pady=(0, 10))
+    cleanup_status.grid(row=10, column=1, sticky="w")
 
     # Resample button
     resample_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -213,16 +238,16 @@ def main():
             resample_status.config(text="\u274C", fg="red")
 
     btn_resample = tk.Button(root, text="Resample sCT", command=on_resample)
-    btn_resample.grid(row=10, column=0, sticky="w", padx=10, pady=(0, 10))
-    resample_status.grid(row=10, column=1, sticky="w")
+    btn_resample.grid(row=11, column=0, sticky="w", padx=10, pady=(0, 10))
+    resample_status.grid(row=11, column=1, sticky="w")
 
     # Dropdown menu for registration series
     selected_var = tk.StringVar()
     selection_map = {}
 
-    tk.Label(root, text="Select Series for Registration").grid(row=11, column=0, columnspan=2, sticky="w", padx=10)
+    tk.Label(root, text="Select Series for Registration").grid(row=12, column=0, columnspan=2, sticky="w", padx=10)
     dropdown = tk.OptionMenu(root, selected_var, '')
-    dropdown.grid(row=12, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    dropdown.grid(row=13, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
     # Register button
     register_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -268,9 +293,9 @@ def main():
             on_get_images()
 
     btn_register = tk.Button(root, text="Register", command=on_register)
-    btn_register.grid(row=13, column=0, sticky="w", padx=10, pady=(0, 10))
-    register_status.grid(row=13, column=1, sticky="w")
-    register_progress.grid(row=14, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    btn_register.grid(row=14, column=0, sticky="w", padx=10, pady=(0, 10))
+    register_status.grid(row=14, column=1, sticky="w")
+    register_progress.grid(row=15, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
     register_progress.grid_remove()
 
     def update_dropdown(*args):
