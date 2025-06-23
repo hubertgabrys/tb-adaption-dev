@@ -629,8 +629,9 @@ def perform_registration(current_directory, patient_id, rtplan_label, selected_s
     # Let user pick Z- and Y-shifts manually (in slices)
     shift_z_slices, shift_y_slices = run_viewer(fixed_resampled, moving_resampled)
 
-    # Convert slice shift → mm
-    spacing = fixed_image.GetSpacing()  # (x, y, z)
+    # Convert slice shift → mm using the spacing of the volume that was
+    # displayed for manual alignment
+    spacing = reference.GetSpacing()  # (x, y, z)
     shift_z_mm = shift_z_slices * spacing[2] * (-1)
     shift_y_mm = shift_y_slices * spacing[1] * (-1)
     # print(f"Moving image spacing: {moving_image.GetSpacing()} mm")
