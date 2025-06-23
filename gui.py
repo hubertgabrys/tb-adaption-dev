@@ -241,8 +241,21 @@ def main():
             def confirm():
                 return messagebox.askyesno("Registration", "Accept registration result?")
 
+            # Determine which series the user selected in the dropdown
+            selected_label = selected_var.get()
+            selected_uid = selection_map.get(selected_label)
+            selected_info = series_info.get(selected_uid, {})
+            selected_modality = selected_info.get("modality")
+
             try:
-                rigid_transform = perform_registration(str(input_dir), patient_id, rtplan_label, confirm_fn=confirm)
+                rigid_transform = perform_registration(
+                    str(input_dir),
+                    patient_id,
+                    rtplan_label,
+                    selected_series_uid=selected_uid,
+                    selected_modality=selected_modality,
+                    confirm_fn=confirm,
+                )
             except Exception:
                 rigid_transform = None
 
@@ -257,6 +270,7 @@ def main():
                     patient_id,
                     rtplan_label,
                     rigid_transform,
+                    series_uid=selected_uid,
                     progress_callback=progress_cb,
                 )
             register_status.config(text="\u2705", fg="green")

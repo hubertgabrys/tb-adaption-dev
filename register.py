@@ -40,11 +40,21 @@ def get_base_plan(patient_id, rtplan_label, rtplan_uid):
                          rtplan_uid=rtplan_uid)
 
 
-def read_dicom_series(directory, modality="CT"):
+def read_dicom_series(directory, modality="CT", series_uid=None):
     reader = sitk.ImageSeriesReader()
     series_IDs = reader.GetGDCMSeriesIDs(directory)
     if not series_IDs:
         raise ValueError(f"No DICOM series found in directory: {directory}")
+
+    if series_uid:
+        if series_uid not in series_IDs:
+            raise ValueError(
+                f"Series UID {series_uid} not found in directory: {directory}"
+            )
+        file_names = reader.GetGDCMSeriesFileNames(directory, series_uid)
+        reader.SetFileNames(file_names)
+        image = reader.Execute()
+        return image, file_names
 
     # Set the search patterns based on modality.
     if modality == "CT":
@@ -515,7 +525,7 @@ def run_viewer(fixed_image, moving_image):
     overlay = MultiViewOverlay(fixed_array, moving_array)
     return overlay.shift_z, overlay.shift_y
 
-def perform_registration(current_directory, patient_id, rtplan_label, confirm_fn=None):
+def perform_registration(current_directory, patient_id, rtplan_label, selected_series_uid=None, selected_modality=None, confirm_fn=None):
     fixed_dir = current_directory
     baseplan_dir = Path(os.environ.get('BASEPLAN_DIR'))
     moving_dir = baseplan_dir / patient_id / rtplan_label
@@ -523,10 +533,17 @@ def perform_registration(current_directory, patient_id, rtplan_label, confirm_fn
     output_reg_file = current_directory + "\\REG.dcm"
 
     print(f"{get_datetime()} Reading fixed image from:", fixed_dir)
-    try:
-        fixed_image, fixed_files = read_dicom_series(fixed_dir, "CT")
-    except ValueError:
-        fixed_image, fixed_files = read_dicom_series(fixed_dir, "MR")
+    if selected_series_uid:
+        fixed_image, fixed_files = read_dicom_series(
+            fixed_dir,
+            modality=selected_modality or "CT",
+            series_uid=selected_series_uid,
+        )
+    else:
+        try:
+            fixed_image, fixed_files = read_dicom_series(fixed_dir, "CT")
+        except ValueError:
+            fixed_image, fixed_files = read_dicom_series(fixed_dir, "MR")
     print(f"{get_datetime()} Reading moving image from:", moving_dir)
     moving_image, moving_files = read_dicom_series(moving_dir, "CT")
 
