@@ -364,9 +364,11 @@ def create_registration_file(output_reg_file, final_transform, fixed_meta, movin
 # Visualization
 # --------------------------------------------------------------------
 class MultiViewOverlay:
-    def __init__(self, fixed_array, moving_array):
+    def __init__(self, fixed_array, moving_array, spacing):
         self.fixed = fixed_array
         self.moving = moving_array
+        # spacing comes from SimpleITK in (x, y, z) order
+        self.spacing = spacing
         self.alpha = 0.5
 
         self.vmin = -160
@@ -386,6 +388,26 @@ class MultiViewOverlay:
         max_shift_z = self.fixed.shape[0] // 2
         max_shift_y = self.fixed.shape[1] // 2
 
+        # compute extents for aspect-correct display
+        self.extent_transverse = [
+            0,
+            self.fixed.shape[2] * self.spacing[0],
+            0,
+            self.fixed.shape[1] * self.spacing[1],
+        ]
+        self.extent_coronal = [
+            0,
+            self.fixed.shape[2] * self.spacing[0],
+            0,
+            self.fixed.shape[0] * self.spacing[2],
+        ]
+        self.extent_sagittal = [
+            0,
+            self.fixed.shape[1] * self.spacing[1],
+            0,
+            self.fixed.shape[0] * self.spacing[2],
+        ]
+
         # show larger views for easier inspection
         self.fig, self.axes = plt.subplots(1, 3, figsize=(20, 7))
         self.ax_transverse, self.ax_coronal, self.ax_sagittal = self.axes
@@ -394,13 +416,26 @@ class MultiViewOverlay:
         for ax in self.axes:
             ax.set_xticks([])
             ax.set_yticks([])
+            ax.set_aspect('equal')
 
         # initial images
-        self.im_transverse = self.ax_transverse.imshow(self.get_transverse_slice(), origin='upper')
+        self.im_transverse = self.ax_transverse.imshow(
+            self.get_transverse_slice(),
+            origin='upper',
+            extent=self.extent_transverse,
+        )
         self.ax_transverse.set_title('Transverse (Axial)')
-        self.im_coronal    = self.ax_coronal   .imshow(self.get_coronal_slice(),    origin='lower')
+        self.im_coronal = self.ax_coronal.imshow(
+            self.get_coronal_slice(),
+            origin='lower',
+            extent=self.extent_coronal,
+        )
         self.ax_coronal   .set_title('Coronal')
-        self.im_sagittal  = self.ax_sagittal  .imshow(self.get_sagittal_slice(),  origin='lower')
+        self.im_sagittal = self.ax_sagittal.imshow(
+            self.get_sagittal_slice(),
+            origin='lower',
+            extent=self.extent_sagittal,
+        )
         self.ax_sagittal .set_title('Sagittal')
 
         # slice text
@@ -497,8 +532,12 @@ class MultiViewOverlay:
 
     def update_display(self):
         self.im_transverse.set_data(self.get_transverse_slice())
-        self.im_coronal   .set_data(self.get_coronal_slice())
-        self.im_sagittal .set_data(self.get_sagittal_slice())
+        self.im_coronal.set_data(self.get_coronal_slice())
+        self.im_sagittal.set_data(self.get_sagittal_slice())
+        # Ensure extents are applied when the image updates
+        self.im_transverse.set_extent(self.extent_transverse)
+        self.im_coronal.set_extent(self.extent_coronal)
+        self.im_sagittal.set_extent(self.extent_sagittal)
 
         self.text_transverse.set_text(f"Slice {self.slice_z + 1} / {self.fixed.shape[0]}")
         self.text_coronal   .set_text(f"Slice {self.slice_y + 1} / {self.fixed.shape[1]}")
@@ -522,7 +561,8 @@ class MultiViewOverlay:
 def run_viewer(fixed_image, moving_image):
     fixed_array = sitk.GetArrayFromImage(fixed_image)
     moving_array = sitk.GetArrayFromImage(moving_image)
-    overlay = MultiViewOverlay(fixed_array, moving_array)
+    spacing = fixed_image.GetSpacing()  # (x, y, z)
+    overlay = MultiViewOverlay(fixed_array, moving_array, spacing)
     return overlay.shift_z, overlay.shift_y
 
 def perform_registration(current_directory, patient_id, rtplan_label, selected_series_uid=None, selected_modality=None, confirm_fn=None):
