@@ -602,7 +602,8 @@ def perform_registration(current_directory, patient_id, rtplan_label, selected_s
     extent_fixed = np.array(fixed_image.GetSize()) * np.array(fixed_image.GetSpacing())
     extent_moving = np.array(moving_image.GetSize()) * np.array(moving_image.GetSpacing())
 
-    if extent_moving[2] >= extent_fixed[2]:
+    reference_is_moving = extent_moving[2] >= extent_fixed[2]
+    if reference_is_moving:
         reference = moving_image
         fixed_resampled = sitk.Resample(
             fixed_image,
@@ -657,7 +658,26 @@ def perform_registration(current_directory, patient_id, rtplan_label, selected_s
     # Show images after registration
     translation = rigid_transform.GetNthTransform(0).GetTranslation()
     print(f"Rigid translation: {translation}")
-    run_viewer(fixed_image, moving_reg)
+    if reference_is_moving:
+        fixed_disp = sitk.Resample(
+            fixed_image,
+            moving_image,
+            rigid_transform.GetInverse(),
+            sitk.sitkLinear,
+            0.0,
+            fixed_image.GetPixelIDValue(),
+        )
+        moving_disp = sitk.Resample(
+            moving_image,
+            moving_image,
+            rigid_transform,
+            sitk.sitkLinear,
+            0.0,
+            moving_image.GetPixelIDValue(),
+        )
+        run_viewer(fixed_disp, moving_disp)
+    else:
+        run_viewer(fixed_image, moving_reg)
 
     if confirm_fn is None:
         registration_accepted = input("Registration accepted? (y/n): ") == "y"
