@@ -48,9 +48,11 @@ def read_dicom_series(directory, modality="CT"):
 
     # Set the search patterns based on modality.
     if modality == "CT":
-        patterns = ["SyntheticCT HU", ""]
+        patterns = ["SyntheticCT HU", "Synthetic CT", ""]
+        print("Using CT for registration.")
     elif modality == "MR":
         patterns = ["t2_tse_tra_warp", "t2_tse_tra"]
+        print("Using MR for registration.")
     else:
         raise ValueError("Unsupported modality. Please choose 'CT' or 'MR'.")
 

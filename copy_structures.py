@@ -73,6 +73,10 @@ def read_new_rtstruct(current_directory):
     rtstruct, rtstruct_filename = find_rtstruct(current_directory, "syntheticct hu")
     if rtstruct is not None:
         return rtstruct, rtstruct_filename
+    # Prioritize Synthetic CT RTSTRUCT files.
+    rtstruct, rtstruct_filename = find_rtstruct(current_directory, "synthetic ct")
+    if rtstruct is not None:
+        return rtstruct, rtstruct_filename
     # Fall back to T2_TSE_TRA RTSTRUCT files.
     rtstruct, rtstruct_filename = find_rtstruct(current_directory, "t2_tse_tra")
     return rtstruct, rtstruct_filename
