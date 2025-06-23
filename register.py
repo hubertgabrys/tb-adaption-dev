@@ -364,15 +364,21 @@ def create_registration_file(output_reg_file, final_transform, fixed_meta, movin
 # Visualization
 # --------------------------------------------------------------------
 class MultiViewOverlay:
-    def __init__(self, fixed_array, moving_array, spacing):
+    def __init__(self, fixed_array, moving_array, spacing,
+                 fixed_modality="CT", moving_modality="CT"):
         self.fixed = fixed_array
         self.moving = moving_array
         # spacing comes from SimpleITK in (x, y, z) order
         self.spacing = spacing
         self.alpha = 0.5
 
-        self.vmin = -160
-        self.vmax = 240
+        self.fixed_modality = fixed_modality
+        self.moving_modality = moving_modality
+
+        self.fixed_vmin, self.fixed_vmax = self._compute_range(self.fixed,
+                                                                self.fixed_modality)
+        self.moving_vmin, self.moving_vmax = self._compute_range(self.moving,
+                                                                  self.moving_modality)
 
         self.cmap_fixed = plt.get_cmap("gray")
         self.cmap_moving = plt.get_cmap("hot")
@@ -474,15 +480,27 @@ class MultiViewOverlay:
         self.fig.canvas.mpl_connect('scroll_event', self.on_scroll)
         plt.show()
 
-    def apply_colormap(self, image_slice, cmap):
-        normed = (image_slice - self.vmin) / (self.vmax - self.vmin)
+    def _compute_range(self, array, modality):
+        if modality == "CT":
+            return -160.0, 240.0
+        lo = np.percentile(array, 5)
+        hi = np.percentile(array, 95)
+        if lo == hi:
+            lo = float(np.min(array))
+            hi = float(np.max(array))
+        return float(lo), float(hi)
+
+    def apply_colormap(self, image_slice, cmap, vmin, vmax):
+        normed = (image_slice - vmin) / (vmax - vmin)
         normed = np.clip(normed, 0, 1)
         rgba = cmap(normed)
         return rgba[..., :3]
 
     def blend_slices(self, fixed_slice, moving_slice):
-        fixed_rgb  = self.apply_colormap(fixed_slice,  self.cmap_fixed)
-        moving_rgb = self.apply_colormap(moving_slice, self.cmap_moving)
+        fixed_rgb  = self.apply_colormap(fixed_slice,  self.cmap_fixed,
+                                         self.fixed_vmin, self.fixed_vmax)
+        moving_rgb = self.apply_colormap(moving_slice, self.cmap_moving,
+                                         self.moving_vmin, self.moving_vmax)
         return (1 - self.alpha) * fixed_rgb + self.alpha * moving_rgb
 
     def get_transverse_slice(self):
@@ -548,11 +566,18 @@ class MultiViewOverlay:
 # --------------------------------------------------------------------
 # Main
 # --------------------------------------------------------------------
-def run_viewer(fixed_image, moving_image):
+def run_viewer(fixed_image, moving_image,
+               fixed_modality="CT", moving_modality="CT"):
     fixed_array = sitk.GetArrayFromImage(fixed_image)
     moving_array = sitk.GetArrayFromImage(moving_image)
     spacing = fixed_image.GetSpacing()  # (x, y, z)
-    overlay = MultiViewOverlay(fixed_array, moving_array, spacing)
+    overlay = MultiViewOverlay(
+        fixed_array,
+        moving_array,
+        spacing,
+        fixed_modality=fixed_modality,
+        moving_modality=moving_modality,
+    )
     return overlay.shift_z, overlay.shift_y
 
 def perform_registration(current_directory, patient_id, rtplan_label, selected_series_uid=None, selected_modality=None, confirm_fn=None):
@@ -564,18 +589,22 @@ def perform_registration(current_directory, patient_id, rtplan_label, selected_s
 
     print(f"{get_datetime()} Reading fixed image from:", fixed_dir)
     if selected_series_uid:
+        fixed_modality = selected_modality or "CT"
         fixed_image, fixed_files = read_dicom_series(
             fixed_dir,
-            modality=selected_modality or "CT",
+            modality=fixed_modality,
             series_uid=selected_series_uid,
         )
     else:
         try:
+            fixed_modality = "CT"
             fixed_image, fixed_files = read_dicom_series(fixed_dir, "CT")
         except ValueError:
+            fixed_modality = "MR"
             fixed_image, fixed_files = read_dicom_series(fixed_dir, "MR")
     print(f"{get_datetime()} Reading moving image from:", moving_dir)
-    moving_image, moving_files = read_dicom_series(moving_dir, "CT")
+    moving_modality = "CT"
+    moving_image, moving_files = read_dicom_series(moving_dir, moving_modality)
 
     # Cast & orient
     fixed_image = sitk.Cast(sitk.DICOMOrient(fixed_image, 'LPS'), sitk.sitkFloat32)
@@ -593,7 +622,12 @@ def perform_registration(current_directory, patient_id, rtplan_label, selected_s
         0.0,
         moving_image.GetPixelIDValue()
     )
-    shift_z_slices, shift_y_slices = run_viewer(fixed_image, moving_resized)
+    shift_z_slices, shift_y_slices = run_viewer(
+        fixed_image,
+        moving_resized,
+        fixed_modality=fixed_modality,
+        moving_modality=moving_modality,
+    )
 
     # Convert slice shift → mm
     spacing = fixed_image.GetSpacing()  # (x, y, z)
@@ -624,7 +658,12 @@ def perform_registration(current_directory, patient_id, rtplan_label, selected_s
     # Show images after registration
     translation = rigid_transform.GetNthTransform(0).GetTranslation()
     print(f"Rigid translation: {translation}")
-    run_viewer(fixed_image, moving_reg)
+    run_viewer(
+        fixed_image,
+        moving_reg,
+        fixed_modality=fixed_modality,
+        moving_modality=moving_modality,
+    )
 
     if confirm_fn is None:
         registration_accepted = input("Registration accepted? (y/n): ") == "y"
