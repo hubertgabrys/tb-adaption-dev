@@ -385,28 +385,18 @@ class MultiViewOverlay:
         # manual shifts (in slices)
         self.shift_z = 0
         self.shift_y = 0
-        max_shift_z = self.fixed.shape[0] // 2
-        max_shift_y = self.fixed.shape[1] // 2
+        max_shift_z = max(self.fixed.shape[0], self.moving.shape[0]) // 2
+        max_shift_y = max(self.fixed.shape[1], self.moving.shape[1]) // 2
 
-        # compute extents for aspect-correct display
-        self.extent_transverse = [
-            0,
-            self.fixed.shape[2] * self.spacing[0],
-            0,
-            self.fixed.shape[1] * self.spacing[1],
-        ]
-        self.extent_coronal = [
-            0,
-            self.fixed.shape[2] * self.spacing[0],
-            0,
-            self.fixed.shape[0] * self.spacing[2],
-        ]
-        self.extent_sagittal = [
-            0,
-            self.fixed.shape[1] * self.spacing[1],
-            0,
-            self.fixed.shape[0] * self.spacing[2],
-        ]
+        # compute extents for aspect-correct display based on the
+        # combined range of both images
+        range_x = max(self.fixed.shape[2], self.moving.shape[2]) * self.spacing[0]
+        range_y = max(self.fixed.shape[1], self.moving.shape[1]) * self.spacing[1]
+        range_z = max(self.fixed.shape[0], self.moving.shape[0]) * self.spacing[2]
+
+        self.extent_transverse = [0, range_x, 0, range_y]
+        self.extent_coronal = [0, range_x, 0, range_z]
+        self.extent_sagittal = [0, range_y, 0, range_z]
 
         # show larger views for easier inspection
         self.fig, self.axes = plt.subplots(1, 3, figsize=(20, 7))
@@ -496,10 +486,10 @@ class MultiViewOverlay:
         return (1 - self.alpha) * fixed_rgb + self.alpha * moving_rgb
 
     def get_transverse_slice(self):
-        z = int(self.slice_z + self.shift_z)
-        z = np.clip(z, 0, self.fixed.shape[0]-1)
+        z = int(self.slice_z)
         f_slc = self.fixed[z, :, :]
-        m_slc = self.moving[z, :, :]
+        m_vol = np.roll(self.moving, int(self.shift_z), axis=0)
+        m_slc = m_vol[z, :, :]
         m_slc = np.roll(m_slc, int(self.shift_y), axis=0)
         return self.blend_slices(f_slc, m_slc)
 
