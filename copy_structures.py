@@ -68,24 +68,27 @@ def read_base_rtstruct(patient_id, rtplan_label):
     return rtstruct
 
 
-def read_new_rtstruct(current_directory):
-    # Prioritize Synthetic CT HU RTSTRUCT files.
+def read_new_rtstruct(current_directory, series_uid=None):
+    if series_uid:
+        filename = os.path.join(current_directory, f"RS_{series_uid}.dcm")
+        if os.path.exists(filename):
+            ds = pydicom.dcmread(filename)
+            return ds, f"RS_{series_uid}.dcm"
+    # Fallback to keyword-based search
     rtstruct, rtstruct_filename = find_rtstruct(current_directory, "syntheticct hu")
     if rtstruct is not None:
         return rtstruct, rtstruct_filename
-    # Prioritize Synthetic CT RTSTRUCT files.
     rtstruct, rtstruct_filename = find_rtstruct(current_directory, "synthetic ct")
     if rtstruct is not None:
         return rtstruct, rtstruct_filename
-    # Fall back to T2_TSE_TRA RTSTRUCT files.
     rtstruct, rtstruct_filename = find_rtstruct(current_directory, "t2_tse_tra")
     return rtstruct, rtstruct_filename
 
 
-def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform, progress_callback=None):
+def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform, series_uid=None, progress_callback=None):
     # Read the base and new RTSTRUCT files.
     rtstruct_base = read_base_rtstruct(patient_id, rtplan_label)
-    rtstruct_new, rtstruct_new_filename = read_new_rtstruct(current_directory)
+    rtstruct_new, rtstruct_new_filename = read_new_rtstruct(current_directory, series_uid)
 
     # Get the inverse of the transform
     rigid_transform = rigid_transform.GetInverse()

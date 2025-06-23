@@ -40,11 +40,21 @@ def get_base_plan(patient_id, rtplan_label, rtplan_uid):
                          rtplan_uid=rtplan_uid)
 
 
-def read_dicom_series(directory, modality="CT"):
+def read_dicom_series(directory, modality="CT", series_uid=None):
     reader = sitk.ImageSeriesReader()
     series_IDs = reader.GetGDCMSeriesIDs(directory)
     if not series_IDs:
         raise ValueError(f"No DICOM series found in directory: {directory}")
+
+    if series_uid:
+        if series_uid not in series_IDs:
+            raise ValueError(
+                f"Series UID {series_uid} not found in directory: {directory}"
+            )
+        file_names = reader.GetGDCMSeriesFileNames(directory, series_uid)
+        reader.SetFileNames(file_names)
+        image = reader.Execute()
+        return image, file_names
 
     # Set the search patterns based on modality.
     if modality == "CT":
@@ -354,9 +364,11 @@ def create_registration_file(output_reg_file, final_transform, fixed_meta, movin
 # Visualization
 # --------------------------------------------------------------------
 class MultiViewOverlay:
-    def __init__(self, fixed_array, moving_array):
+    def __init__(self, fixed_array, moving_array, spacing):
         self.fixed = fixed_array
         self.moving = moving_array
+        # spacing comes from SimpleITK in (x, y, z) order
+        self.spacing = spacing
         self.alpha = 0.5
 
         self.vmin = -160
@@ -373,8 +385,18 @@ class MultiViewOverlay:
         # manual shifts (in slices)
         self.shift_z = 0
         self.shift_y = 0
-        max_shift_z = self.fixed.shape[0] // 2
-        max_shift_y = self.fixed.shape[1] // 2
+        max_shift_z = max(self.fixed.shape[0], self.moving.shape[0]) // 2
+        max_shift_y = max(self.fixed.shape[1], self.moving.shape[1]) // 2
+
+        # compute extents for aspect-correct display based on the
+        # combined range of both images
+        range_x = max(self.fixed.shape[2], self.moving.shape[2]) * self.spacing[0]
+        range_y = max(self.fixed.shape[1], self.moving.shape[1]) * self.spacing[1]
+        range_z = max(self.fixed.shape[0], self.moving.shape[0]) * self.spacing[2]
+
+        self.extent_transverse = [0, range_x, 0, range_y]
+        self.extent_coronal = [0, range_x, 0, range_z]
+        self.extent_sagittal = [0, range_y, 0, range_z]
 
         # show larger views for easier inspection
         self.fig, self.axes = plt.subplots(1, 3, figsize=(20, 7))
@@ -384,13 +406,26 @@ class MultiViewOverlay:
         for ax in self.axes:
             ax.set_xticks([])
             ax.set_yticks([])
+            ax.set_aspect('equal')
 
         # initial images
-        self.im_transverse = self.ax_transverse.imshow(self.get_transverse_slice(), origin='upper')
+        self.im_transverse = self.ax_transverse.imshow(
+            self.get_transverse_slice(),
+            origin='upper',
+            extent=self.extent_transverse,
+        )
         self.ax_transverse.set_title('Transverse (Axial)')
-        self.im_coronal    = self.ax_coronal   .imshow(self.get_coronal_slice(),    origin='lower')
+        self.im_coronal = self.ax_coronal.imshow(
+            self.get_coronal_slice(),
+            origin='lower',
+            extent=self.extent_coronal,
+        )
         self.ax_coronal   .set_title('Coronal')
-        self.im_sagittal  = self.ax_sagittal  .imshow(self.get_sagittal_slice(),  origin='lower')
+        self.im_sagittal = self.ax_sagittal.imshow(
+            self.get_sagittal_slice(),
+            origin='lower',
+            extent=self.extent_sagittal,
+        )
         self.ax_sagittal .set_title('Sagittal')
 
         # slice text
@@ -451,10 +486,10 @@ class MultiViewOverlay:
         return (1 - self.alpha) * fixed_rgb + self.alpha * moving_rgb
 
     def get_transverse_slice(self):
-        z = int(self.slice_z + self.shift_z)
-        z = np.clip(z, 0, self.fixed.shape[0]-1)
+        z = int(self.slice_z)
         f_slc = self.fixed[z, :, :]
-        m_slc = self.moving[z, :, :]
+        m_vol = np.roll(self.moving, int(self.shift_z), axis=0)
+        m_slc = m_vol[z, :, :]
         m_slc = np.roll(m_slc, int(self.shift_y), axis=0)
         return self.blend_slices(f_slc, m_slc)
 
@@ -487,8 +522,12 @@ class MultiViewOverlay:
 
     def update_display(self):
         self.im_transverse.set_data(self.get_transverse_slice())
-        self.im_coronal   .set_data(self.get_coronal_slice())
-        self.im_sagittal .set_data(self.get_sagittal_slice())
+        self.im_coronal.set_data(self.get_coronal_slice())
+        self.im_sagittal.set_data(self.get_sagittal_slice())
+        # Ensure extents are applied when the image updates
+        self.im_transverse.set_extent(self.extent_transverse)
+        self.im_coronal.set_extent(self.extent_coronal)
+        self.im_sagittal.set_extent(self.extent_sagittal)
 
         self.text_transverse.set_text(f"Slice {self.slice_z + 1} / {self.fixed.shape[0]}")
         self.text_coronal   .set_text(f"Slice {self.slice_y + 1} / {self.fixed.shape[1]}")
@@ -512,10 +551,11 @@ class MultiViewOverlay:
 def run_viewer(fixed_image, moving_image):
     fixed_array = sitk.GetArrayFromImage(fixed_image)
     moving_array = sitk.GetArrayFromImage(moving_image)
-    overlay = MultiViewOverlay(fixed_array, moving_array)
+    spacing = fixed_image.GetSpacing()  # (x, y, z)
+    overlay = MultiViewOverlay(fixed_array, moving_array, spacing)
     return overlay.shift_z, overlay.shift_y
 
-def perform_registration(current_directory, patient_id, rtplan_label, confirm_fn=None):
+def perform_registration(current_directory, patient_id, rtplan_label, selected_series_uid=None, selected_modality=None, confirm_fn=None):
     fixed_dir = current_directory
     baseplan_dir = Path(os.environ.get('BASEPLAN_DIR'))
     moving_dir = baseplan_dir / patient_id / rtplan_label
@@ -523,10 +563,17 @@ def perform_registration(current_directory, patient_id, rtplan_label, confirm_fn
     output_reg_file = current_directory + "\\REG.dcm"
 
     print(f"{get_datetime()} Reading fixed image from:", fixed_dir)
-    try:
-        fixed_image, fixed_files = read_dicom_series(fixed_dir, "CT")
-    except ValueError:
-        fixed_image, fixed_files = read_dicom_series(fixed_dir, "MR")
+    if selected_series_uid:
+        fixed_image, fixed_files = read_dicom_series(
+            fixed_dir,
+            modality=selected_modality or "CT",
+            series_uid=selected_series_uid,
+        )
+    else:
+        try:
+            fixed_image, fixed_files = read_dicom_series(fixed_dir, "CT")
+        except ValueError:
+            fixed_image, fixed_files = read_dicom_series(fixed_dir, "MR")
     print(f"{get_datetime()} Reading moving image from:", moving_dir)
     moving_image, moving_files = read_dicom_series(moving_dir, "CT")
 
