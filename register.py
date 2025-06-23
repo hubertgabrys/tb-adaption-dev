@@ -365,8 +365,20 @@ def create_registration_file(output_reg_file, final_transform, fixed_meta, movin
 # --------------------------------------------------------------------
 class MultiViewOverlay:
     def __init__(self, fixed_array, moving_array, spacing):
-        self.fixed = fixed_array
-        self.moving = moving_array
+        # Pad the volumes so scrolling can cover the full range of both images
+        max_z = max(fixed_array.shape[0], moving_array.shape[0])
+        max_y = max(fixed_array.shape[1], moving_array.shape[1])
+        max_x = max(fixed_array.shape[2], moving_array.shape[2])
+
+        self.fixed = np.zeros((max_z, max_y, max_x), dtype=fixed_array.dtype)
+        self.fixed[: fixed_array.shape[0], : fixed_array.shape[1], : fixed_array.shape[2]] = fixed_array
+
+        self.moving = np.zeros((max_z, max_y, max_x), dtype=moving_array.dtype)
+        self.moving[: moving_array.shape[0], : moving_array.shape[1], : moving_array.shape[2]] = moving_array
+
+        self.max_z = max_z
+        self.max_y = max_y
+        self.max_x = max_x
         # spacing comes from SimpleITK in (x, y, z) order
         self.spacing = spacing
         self.alpha = 0.5
@@ -377,22 +389,22 @@ class MultiViewOverlay:
         self.cmap_fixed = plt.get_cmap("gray")
         self.cmap_moving = plt.get_cmap("hot")
 
-        # initial slice indices
-        self.slice_z = self.fixed.shape[0] // 2
-        self.slice_y = self.fixed.shape[1] // 2
-        self.slice_x = self.fixed.shape[2] // 2
+        # initial slice indices use the combined volume dimensions
+        self.slice_z = self.max_z // 2
+        self.slice_y = self.max_y // 2
+        self.slice_x = self.max_x // 2
 
         # manual shifts (in slices)
         self.shift_z = 0
         self.shift_y = 0
-        max_shift_z = max(self.fixed.shape[0], self.moving.shape[0]) // 2
-        max_shift_y = max(self.fixed.shape[1], self.moving.shape[1]) // 2
+        max_shift_z = self.max_z // 2
+        max_shift_y = self.max_y // 2
 
         # compute extents for aspect-correct display based on the
         # combined range of both images
-        range_x = max(self.fixed.shape[2], self.moving.shape[2]) * self.spacing[0]
-        range_y = max(self.fixed.shape[1], self.moving.shape[1]) * self.spacing[1]
-        range_z = max(self.fixed.shape[0], self.moving.shape[0]) * self.spacing[2]
+        range_x = self.max_x * self.spacing[0]
+        range_y = self.max_y * self.spacing[1]
+        range_z = self.max_z * self.spacing[2]
 
         self.extent_transverse = [0, range_x, 0, range_y]
         self.extent_coronal = [0, range_x, 0, range_z]
@@ -431,17 +443,17 @@ class MultiViewOverlay:
         # slice text
         self.text_transverse = self.ax_transverse.text(
             0.05, 0.95,
-            f"Slice {self.slice_z + 1} / {self.fixed.shape[0]}",
+            f"Slice {self.slice_z + 1} / {self.max_z}",
             transform=self.ax_transverse.transAxes, color='yellow', fontsize=10, verticalalignment='top'
         )
         self.text_coronal = self.ax_coronal.text(
             0.05, 0.95,
-            f"Slice {self.slice_y + 1} / {self.fixed.shape[1]}",
+            f"Slice {self.slice_y + 1} / {self.max_y}",
             transform=self.ax_coronal.transAxes, color='yellow', fontsize=10, verticalalignment='top'
         )
         self.text_sagittal = self.ax_sagittal.text(
             0.05, 0.95,
-            f"Slice {self.slice_x + 1} / {self.fixed.shape[2]}",
+            f"Slice {self.slice_x + 1} / {self.max_x}",
             transform=self.ax_sagittal.transAxes, color='yellow', fontsize=10, verticalalignment='top'
         )
 
@@ -529,20 +541,20 @@ class MultiViewOverlay:
         self.im_coronal.set_extent(self.extent_coronal)
         self.im_sagittal.set_extent(self.extent_sagittal)
 
-        self.text_transverse.set_text(f"Slice {self.slice_z + 1} / {self.fixed.shape[0]}")
-        self.text_coronal   .set_text(f"Slice {self.slice_y + 1} / {self.fixed.shape[1]}")
-        self.text_sagittal  .set_text(f"Slice {self.slice_x + 1} / {self.fixed.shape[2]}")
+        self.text_transverse.set_text(f"Slice {self.slice_z + 1} / {self.max_z}")
+        self.text_coronal.set_text(f"Slice {self.slice_y + 1} / {self.max_y}")
+        self.text_sagittal.set_text(f"Slice {self.slice_x + 1} / {self.max_x}")
 
         self.fig.canvas.draw_idle()
 
     def on_scroll(self, event):
         delta = self.scroll_speed if event.button == 'up' else -self.scroll_speed
         if event.inaxes == self.ax_transverse:
-            self.slice_z = np.clip(self.slice_z + delta, 0, self.fixed.shape[0] - 1)
+            self.slice_z = np.clip(self.slice_z + delta, 0, self.max_z - 1)
         elif event.inaxes == self.ax_coronal:
-            self.slice_y = np.clip(self.slice_y + delta, 0, self.fixed.shape[1] - 1)
+            self.slice_y = np.clip(self.slice_y + delta, 0, self.max_y - 1)
         elif event.inaxes == self.ax_sagittal:
-            self.slice_x = np.clip(self.slice_x + delta, 0, self.fixed.shape[2] - 1)
+            self.slice_x = np.clip(self.slice_x + delta, 0, self.max_x - 1)
         self.update_display()
 
 # --------------------------------------------------------------------
@@ -584,16 +596,37 @@ def perform_registration(current_directory, patient_id, rtplan_label, selected_s
     fixed_meta = extract_metadata(os.path.join(fixed_dir, os.path.basename(fixed_files[0])))
     moving_meta = extract_metadata(os.path.join(moving_dir, os.path.basename(moving_files[0])))
 
+    # Determine reference geometry so the viewer covers the full extent of both
+    # volumes. Whichever image spans a larger distance in the Z direction is
+    # chosen as the reference.
+    extent_fixed = np.array(fixed_image.GetSize()) * np.array(fixed_image.GetSpacing())
+    extent_moving = np.array(moving_image.GetSize()) * np.array(moving_image.GetSpacing())
+
+    if extent_moving[2] >= extent_fixed[2]:
+        reference = moving_image
+        fixed_resampled = sitk.Resample(
+            fixed_image,
+            reference,
+            sitk.Transform(),
+            sitk.sitkLinear,
+            0.0,
+            fixed_image.GetPixelIDValue(),
+        )
+        moving_resampled = moving_image
+    else:
+        reference = fixed_image
+        moving_resampled = sitk.Resample(
+            moving_image,
+            reference,
+            sitk.Transform(),
+            sitk.sitkLinear,
+            0.0,
+            moving_image.GetPixelIDValue(),
+        )
+        fixed_resampled = fixed_image
+
     # Let user pick Z- and Y-shifts manually (in slices)
-    moving_resized = sitk.Resample(
-        moving_image,
-        fixed_image,
-        sitk.Transform(),
-        sitk.sitkLinear,
-        0.0,
-        moving_image.GetPixelIDValue()
-    )
-    shift_z_slices, shift_y_slices = run_viewer(fixed_image, moving_resized)
+    shift_z_slices, shift_y_slices = run_viewer(fixed_resampled, moving_resampled)
 
     # Convert slice shift → mm
     spacing = fixed_image.GetSpacing()  # (x, y, z)
