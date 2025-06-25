@@ -391,8 +391,10 @@ class MultiViewOverlay:
         # manual shifts (in slices)
         self.shift_z = 0
         self.shift_y = 0
+        self.shift_x = 0
         max_shift_z = max(self.fixed.shape[0], self.moving.shape[0]) // 2
         max_shift_y = max(self.fixed.shape[1], self.moving.shape[1]) // 2
+        max_shift_x = max(self.fixed.shape[2], self.moving.shape[2]) // 2
 
         # compute extents for aspect-correct display based on the
         # combined range of both images
@@ -456,8 +458,18 @@ class MultiViewOverlay:
         self.slider_alpha = Slider(slider_ax, 'Overlay', 0.0, 1.0, valinit=self.alpha)
         self.slider_alpha.on_changed(self.update_alpha)
 
-        # shift sliders (Y above Z)
-        shift_ax_y = self.fig.add_axes([0.25, 0.05, 0.5, 0.03])
+        # shift sliders (X above Y above Z)
+        shift_ax_x = self.fig.add_axes([0.25, 0.07, 0.5, 0.03])
+        self.slider_shift_x = Slider(
+            shift_ax_x,
+            'X Shift (slices)',
+            -max_shift_x, max_shift_x,
+            valinit=self.shift_x,
+            valstep=1
+        )
+        self.slider_shift_x.on_changed(self.update_shift_x)
+
+        shift_ax_y = self.fig.add_axes([0.25, 0.04, 0.5, 0.03])
         self.slider_shift_y = Slider(
             shift_ax_y,
             'Y Shift (slices)',
@@ -509,6 +521,7 @@ class MultiViewOverlay:
         m_vol = np.roll(self.moving, int(self.shift_z), axis=0)
         m_slc = m_vol[z, :, :]
         m_slc = np.roll(m_slc, int(self.shift_y), axis=0)
+        m_slc = np.roll(m_slc, int(self.shift_x), axis=1)
         return self.blend_slices(f_slc, m_slc)
 
     def get_coronal_slice(self):
@@ -516,6 +529,7 @@ class MultiViewOverlay:
         f_slc = self.fixed[:, self.slice_y, :]
         m_vol = np.roll(self.moving, int(self.shift_z), axis=0)
         m_vol = np.roll(m_vol, int(self.shift_y), axis=1)
+        m_vol = np.roll(m_vol, int(self.shift_x), axis=2)
         m_slc = m_vol[:, self.slice_y, :]
         return self.blend_slices(f_slc, m_slc)
 
@@ -523,6 +537,7 @@ class MultiViewOverlay:
         f_slc = self.fixed[:, :, self.slice_x]
         m_vol = np.roll(self.moving, int(self.shift_z), axis=0)
         m_vol = np.roll(m_vol, int(self.shift_y), axis=1)
+        m_vol = np.roll(m_vol, int(self.shift_x), axis=2)
         m_slc = m_vol[:, :, self.slice_x]
         return self.blend_slices(f_slc, m_slc)
 
@@ -536,6 +551,10 @@ class MultiViewOverlay:
 
     def update_shift_y(self, val):
         self.shift_y = val
+        self.update_display()
+
+    def update_shift_x(self, val):
+        self.shift_x = val
         self.update_display()
 
     def update_display(self):
@@ -578,7 +597,7 @@ def run_viewer(fixed_image, moving_image,
         fixed_modality=fixed_modality,
         moving_modality=moving_modality,
     )
-    return overlay.shift_z, overlay.shift_y
+    return overlay.shift_z, overlay.shift_y, overlay.shift_x
 
 def perform_registration(current_directory, patient_id, rtplan_label,
                          selected_series_uid=None, selected_modality=None,
@@ -653,7 +672,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         min_val_moving,
         moving_image.GetPixelIDValue()
     )
-    shift_z_slices, shift_y_slices = run_viewer(
+    shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(
         padded_fixed,
         moving_resized,
         fixed_modality=fixed_modality,
@@ -664,14 +683,16 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     spacing = fixed_image.GetSpacing()  # (x, y, z)
     shift_z_mm = shift_z_slices * spacing[2] * (-1)
     shift_y_mm = shift_y_slices * spacing[1] * (-1)
+    shift_x_mm = shift_x_slices * spacing[0] * (-1)
     # print(f"Moving image spacing: {moving_image.GetSpacing()} mm")
     # print(f"Fixed image spacing: {fixed_image.GetSpacing()} mm")
     print(f"{get_datetime()} User‐defined Z-shift: {shift_z_slices} slices = {shift_z_mm:.2f} mm")
     print(f"{get_datetime()} User‐defined Y-shift: {shift_y_slices} slices = {shift_y_mm:.2f} mm")
+    print(f"{get_datetime()} User‐defined X-shift: {shift_x_slices} slices = {shift_x_mm:.2f} mm")
 
     # Build the initial transform from the manual offsets
     initial_transform = sitk.VersorRigid3DTransform()
-    initial_transform.SetTranslation((0.0, shift_y_mm, shift_z_mm))
+    initial_transform.SetTranslation((shift_x_mm, shift_y_mm, shift_z_mm))
     moving_reg = sitk.Resample(moving_image, fixed_image, initial_transform,
                                sitk.sitkLinear, 0.0, fixed_image.GetPixelIDValue())
     translation = initial_transform.GetTranslation()
