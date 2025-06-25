@@ -409,7 +409,8 @@ class MultiViewOverlay:
         # show larger views for easier inspection
         self.fig, self.axes = plt.subplots(1, 3, figsize=(20, 7))
         self.ax_transverse, self.ax_coronal, self.ax_sagittal = self.axes
-        self.scroll_speed = 5
+        # step size for scroll interactions
+        self.scroll_speed = 2
 
         for ax in self.axes:
             ax.set_xticks([])
@@ -454,7 +455,7 @@ class MultiViewOverlay:
         )
 
         # alpha slider (overlay blend)
-        slider_ax = self.fig.add_axes([0.25, 0.09, 0.5, 0.03])
+        slider_ax = self.fig.add_axes([0.25, 0.11, 0.5, 0.03])
         self.slider_alpha = Slider(slider_ax, 'Overlay', 0.0, 1.0, valinit=self.alpha)
         self.slider_alpha.on_changed(self.update_alpha)
 
