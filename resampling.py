@@ -213,9 +213,12 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
         ("0020|1040", get_dicom_value(original_CT_pydicom, Tag(0x00201040))),  # Position reference indicator
         ("0020|000e", new_series_uid),  # Series Instance UID (new)
         ("0008|103e", f"{get_dicom_value(original_CT_pydicom, Tag(0x0008103e))} Resampled"),  # Series description
-        ("0008|0070", "Siemens"),  # Manufacturer
-        ("0008|1090", "Freemax"),  # Manufacturer model name
-        ("0018|1000", "206207"),  # Device Serial Number
+        # ("0008|0070", get_dicom_value(original_CT_pydicom, Tag(0x00080070))),  # Manufacturer
+        ("0008|1090", get_dicom_value(original_CT_pydicom, Tag(0x00081090))),  # Manufacturer model name
+        ("0018|1000", get_dicom_value(original_CT_pydicom, Tag(0x00181000))),  # Device Serial Number
+        ("0008|0070", "Spectronic Medical AB / MIM Software"),  # Manufacturer
+        # ("0008|1090", "Freemax"),  # Manufacturer model name
+        # ("0018|1000", "206207"),  # Device Serial Number
 
     ]
 
