@@ -167,19 +167,76 @@ def perform_rigid_registration(fixed_image, moving_image, initial_transform):
 
     return final_transform
 
+def perform_deformable_registration(fixed_image, moving_image, rigid_transform):
+    """Perform a deformable (B-spline) registration using ``rigid_transform`` as
+    the moving initial transform."""
+
+    print(f"{get_datetime()} Initializing deformable registration...")
+
+    registration_method = sitk.ImageRegistrationMethod()
+    registration_method.SetMetricAsMattesMutualInformation(numberOfHistogramBins=50)
+    registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
+    registration_method.SetMetricSamplingPercentage(0.01, seed=42)
+    registration_method.SetInterpolator(sitk.sitkLinear)
+
+    registration_method.SetOptimizerAsLBFGSB(
+        gradientConvergenceTolerance=1e-5,
+        numberOfIterations=100,
+        maximumNumberOfCorrections=5,
+        maximumNumberOfFunctionEvaluations=1000,
+    )
+
+    # Grid size is chosen to give reasonably dense control points while keeping
+    # computation tractable for typical CT/MR volumes.
+    grid_physical_spacing = [50.0, 50.0, 50.0]
+    image_spacing = fixed_image.GetSpacing()
+    image_size = fixed_image.GetSize()
+    mesh_size = [
+        max(1, int(round((sz * spc) / gsp)))
+        for sz, spc, gsp in zip(image_size, image_spacing, grid_physical_spacing)
+    ]
+    bspline_transform = sitk.BSplineTransformInitializer(
+        image1=fixed_image,
+        transformDomainMeshSize=mesh_size,
+        order=3,
+    )
+
+    registration_method.SetMovingInitialTransform(rigid_transform)
+    registration_method.SetInitialTransform(bspline_transform, inPlace=False)
+
+    registration_method.SetShrinkFactorsPerLevel([4, 2, 1])
+    registration_method.SetSmoothingSigmasPerLevel([2, 1, 0])
+    registration_method.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
+
+    print(f"{get_datetime()} Performing deformable registration...")
+    final_bspline = registration_method.Execute(fixed_image, moving_image)
+    print(f"{get_datetime()} Deformable registration completed.")
+
+    composite = sitk.CompositeTransform(3)
+    composite.AddTransform(rigid_transform)
+    composite.AddTransform(final_bspline)
+    return composite
+
 # --------------------------------------------------------------------
 # Transform extraction & DICOM REG creation
 # --------------------------------------------------------------------
 def get_final_rigid_transform(transform):
-    """
-    If the transform is composite, return its last sub-transform.
-    Otherwise, return the transform itself.
+    """Return the rigid component of ``transform``.
+
+    If ``transform`` is a :class:`SimpleITK.CompositeTransform`, the function
+    searches the contained transforms in reverse order and returns the first
+    rigid transform (``VersorRigid3DTransform``) it encounters.  Otherwise the
+    original transform is returned.
     """
     if isinstance(transform, sitk.CompositeTransform):
         n = transform.GetNumberOfTransforms()
         if n == 0:
             raise ValueError("CompositeTransform is empty!")
-        return transform.GetNthTransform(n - 1)
+        for i in reversed(range(n)):
+            t = transform.GetNthTransform(i)
+            if isinstance(t, sitk.VersorRigid3DTransform):
+                return t
+        raise ValueError("No rigid transform found in composite transform")
     else:
         return transform
 
@@ -330,7 +387,7 @@ def create_registration_file(output_reg_file, final_transform, fixed_meta, movin
     ds.Manufacturer = ""
     ds.InstitutionName = "USZ"
     ds.StudyDescription = fixed_meta.get('StudyDescription', "")
-    ds.SeriesDescription = "Spatial Registration (Rigid)"
+    ds.SeriesDescription = "Spatial Registration"
 
     ds.PatientName = fixed_meta.get('PatientName', "Anonymous")
     ds.PatientID = fixed_meta.get('PatientID', "UnknownID")
@@ -700,16 +757,27 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     # run_viewer(fixed_image, moving_reg)
 
 
-    # Rigid registration
-    rigid_transform = perform_rigid_registration(fixed_image, moving_image, initial_transform)
+    # --- Rigid registration ---
+    rigid_transform = perform_rigid_registration(
+        fixed_image, moving_image, initial_transform
+    )
 
-    # Resample for visual check
-    moving_reg = sitk.Resample(moving_image, fixed_image, rigid_transform,
-                               sitk.sitkLinear, 0.0, fixed_image.GetPixelIDValue())
+    # --- Deformable registration ---
+    composite_transform = perform_deformable_registration(
+        fixed_image, moving_image, rigid_transform
+    )
 
-    # Show images after registration
-    translation = rigid_transform.GetNthTransform(0).GetTranslation()
-    print(f"Rigid translation: {translation}")
+    # Resample for visual check using the composite transform
+    moving_reg = sitk.Resample(
+        moving_image,
+        fixed_image,
+        composite_transform,
+        sitk.sitkLinear,
+        0.0,
+        fixed_image.GetPixelIDValue(),
+    )
+
+    print(f"Rigid translation: {rigid_transform.GetNthTransform(0).GetTranslation()}")
     run_viewer(
         fixed_image,
         moving_reg,
@@ -724,11 +792,18 @@ def perform_registration(current_directory, patient_id, rtplan_label,
 
     if registration_accepted:
         print(f"{get_datetime()} Registration accepted")
-        # In this implementation the transform is inverted inside transformation_matrix()
-        # so we pass rigid_transform as is.
-        create_registration_file(output_reg_file, rigid_transform, fixed_meta, moving_meta,
-                                 fixed_files, moving_files)
-        return rigid_transform
+        # Only the rigid component is stored in the DICOM REG. The full
+        # composite transform (rigid + deformable) is returned for subsequent
+        # processing steps.
+        create_registration_file(
+            output_reg_file,
+            composite_transform,
+            fixed_meta,
+            moving_meta,
+            fixed_files,
+            moving_files,
+        )
+        return composite_transform
     else:
         print(f"{get_datetime()} Registration rejected")
         return None
