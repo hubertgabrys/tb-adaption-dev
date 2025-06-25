@@ -640,6 +640,13 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     fixed_image = sitk.Cast(sitk.DICOMOrient(fixed_image, 'LPS'), sitk.sitkFloat32)
     moving_image = sitk.Cast(sitk.DICOMOrient(moving_image, 'LPS'), sitk.sitkFloat32)
 
+    # Crop 5 slices from the anterior and posterior sides of the fixed image.
+    # After orienting to LPS, the anterior-posterior direction corresponds to
+    # the Y‑axis. Therefore we crop along that axis.
+    crop_lower = (0, 5, 0)  # (crop_x_lower, crop_y_lower, crop_z_lower)
+    crop_upper = (0, 5, 0)  # (crop_x_upper, crop_y_upper, crop_z_upper)
+    fixed_image = sitk.Crop(fixed_image, crop_lower, crop_upper)
+
     fixed_meta = extract_metadata(os.path.join(fixed_dir, os.path.basename(fixed_files[0])))
     moving_meta = extract_metadata(os.path.join(moving_dir, os.path.basename(moving_files[0])))
 
