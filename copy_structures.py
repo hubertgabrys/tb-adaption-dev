@@ -1,5 +1,6 @@
 import copy
 import os
+from pathlib import Path
 
 import pydicom
 from pydicom.valuerep import DS
@@ -48,12 +49,35 @@ def transform_contour_points(transform, contour_data, precision: int = 8):
     return out_ds
 
 
-def find_rtstruct(directory, description_prefix=None):
+def _rtstruct_references_series(ds, series_uid):
+    """Return True if *ds* references *series_uid*."""
+    try:
+        for fr in ds.ReferencedFrameOfReferenceSequence:
+            for st in fr.RTReferencedStudySequence:
+                for se in st.RTReferencedSeriesSequence:
+                    if getattr(se, "SeriesInstanceUID", None) == series_uid:
+                        return True
+    except Exception:
+        pass
+    return False
+
+
+def find_rtstruct(directory, description_prefix=None, series_uid=None):
+    """Locate an RTSTRUCT in *directory* optionally filtered by description prefix
+    or referenced SeriesInstanceUID."""
+
     for file_name in os.listdir(directory):
         rtstruct_path = os.path.join(directory, file_name)
-        ds = pydicom.dcmread(rtstruct_path, stop_before_pixels=True)
+        try:
+            ds = pydicom.dcmread(rtstruct_path, stop_before_pixels=True)
+        except Exception:
+            continue
         if ds.Modality != "RTSTRUCT":
             continue
+
+        if series_uid and not _rtstruct_references_series(ds, series_uid):
+            continue
+
         if description_prefix is None:
             return ds, file_name
         elif hasattr(ds, "SeriesDescription"):
@@ -62,20 +86,26 @@ def find_rtstruct(directory, description_prefix=None):
     return None, None
 
 
-def read_base_rtstruct(patient_id, rtplan_label):
-    base_dir = f"\\\\raoariaapps\\raoariaapps$\\Utilities\\tb_adaption\\base_plans\\{patient_id}\\{rtplan_label}"
-    rtstruct, _ = find_rtstruct(base_dir)
+def read_base_rtstruct(patient_id, rtplan_label, series_uid=None):
+    base_dir = Path(os.environ.get("BASEPLAN_DIR")) / patient_id / rtplan_label
+    rtstruct, _ = find_rtstruct(str(base_dir), series_uid=series_uid)
     return rtstruct
 
 
 def read_new_rtstruct(current_directory, series_uid=None):
+    """Return RTSTRUCT in *current_directory* matching *series_uid* if provided."""
+
     if series_uid:
         filename = os.path.join(current_directory, f"RS_{series_uid}.dcm")
         if os.path.exists(filename):
             ds = pydicom.dcmread(filename)
-            return ds, f"RS_{series_uid}.dcm"
+            return ds, os.path.basename(filename)
+        rtstruct, rtstruct_filename = find_rtstruct(current_directory, series_uid=series_uid)
+        if rtstruct is not None:
+            return rtstruct, rtstruct_filename
+
     # Fallback to keyword-based search
-    rtstruct, rtstruct_filename = find_rtstruct(current_directory, "syntheticct hu")
+    rtstruct, rtstruct_filename = find_rtstruct(current_directory, "syntheticcthu")
     if rtstruct is not None:
         return rtstruct, rtstruct_filename
     rtstruct, rtstruct_filename = find_rtstruct(current_directory, "synthetic ct")
@@ -85,9 +115,12 @@ def read_new_rtstruct(current_directory, series_uid=None):
     return rtstruct, rtstruct_filename
 
 
-def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform, series_uid=None, progress_callback=None):
-    # Read the base and new RTSTRUCT files.
-    rtstruct_base = read_base_rtstruct(patient_id, rtplan_label)
+def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform,
+                    series_uid=None, base_series_uid=None, progress_callback=None):
+    """Copy structures from the base plan RTSTRUCT to the daily RTSTRUCT."""
+
+    # Read the base and new RTSTRUCT files referencing the chosen series.
+    rtstruct_base = read_base_rtstruct(patient_id, rtplan_label, series_uid=base_series_uid)
     rtstruct_new, rtstruct_new_filename = read_new_rtstruct(current_directory, series_uid)
 
     # Get the inverse of the transform

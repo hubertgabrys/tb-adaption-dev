@@ -88,16 +88,17 @@ def main():
     print()
     print(f"{get_datetime()} Performing registration".upper())
     try:
-        rigid_transform = perform_registration(current_directory, patient_id, rtplan_label)
+        rigid_transform, fixed_uid, moving_uid = perform_registration(current_directory, patient_id, rtplan_label)
     except Exception:
         print(f"{get_datetime()} Registration failed")
-        rigid_transform = None
+        rigid_transform, fixed_uid, moving_uid = None, None, None
 
     # Step 5: Copy structures from the base plan to the new image
     print()
     print(f"{get_datetime()} Copying structures".upper())
     if rigid_transform:
-        copy_structures(current_directory, patient_id, rtplan_label, rigid_transform)
+        copy_structures(current_directory, patient_id, rtplan_label, rigid_transform,
+                        series_uid=fixed_uid, base_series_uid=moving_uid)
     else:
         print(f"{get_datetime()} No registration performed -> no structures copied")
 
