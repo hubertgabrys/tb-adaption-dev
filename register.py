@@ -365,7 +365,13 @@ def create_registration_file(output_reg_file, final_transform, fixed_meta, movin
 # --------------------------------------------------------------------
 class MultiViewOverlay:
     def __init__(self, fixed_array, moving_array, spacing,
-                 fixed_modality="CT", moving_modality="CT"):
+                 fixed_modality="CT", moving_modality="CT",
+                 pad_slices=10):
+        if pad_slices > 0:
+            pad_width = ((pad_slices, pad_slices), (0, 0), (0, 0))
+            fixed_array = np.pad(fixed_array, pad_width, mode="constant")
+            moving_array = np.pad(moving_array, pad_width, mode="constant")
+
         self.fixed = fixed_array
         self.moving = moving_array
         # spacing comes from SimpleITK in (x, y, z) order
@@ -567,7 +573,8 @@ class MultiViewOverlay:
 # Main
 # --------------------------------------------------------------------
 def run_viewer(fixed_image, moving_image,
-               fixed_modality="CT", moving_modality="CT"):
+               fixed_modality="CT", moving_modality="CT",
+               pad_slices=10):
     fixed_array = sitk.GetArrayFromImage(fixed_image)
     moving_array = sitk.GetArrayFromImage(moving_image)
     spacing = fixed_image.GetSpacing()  # (x, y, z)
@@ -577,6 +584,7 @@ def run_viewer(fixed_image, moving_image,
         spacing,
         fixed_modality=fixed_modality,
         moving_modality=moving_modality,
+        pad_slices=pad_slices,
     )
     return overlay.shift_z, overlay.shift_y
 
@@ -627,6 +635,7 @@ def perform_registration(current_directory, patient_id, rtplan_label, selected_s
         moving_resized,
         fixed_modality=fixed_modality,
         moving_modality=moving_modality,
+        pad_slices=10,
     )
 
     # Convert slice shift → mm
@@ -663,6 +672,7 @@ def perform_registration(current_directory, patient_id, rtplan_label, selected_s
         moving_reg,
         fixed_modality=fixed_modality,
         moving_modality=moving_modality,
+        pad_slices=10,
     )
 
     if confirm_fn is None:
