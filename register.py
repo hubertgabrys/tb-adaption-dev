@@ -613,17 +613,37 @@ def perform_registration(current_directory, patient_id, rtplan_label, selected_s
     fixed_meta = extract_metadata(os.path.join(fixed_dir, os.path.basename(fixed_files[0])))
     moving_meta = extract_metadata(os.path.join(moving_dir, os.path.basename(moving_files[0])))
 
+    # Compute the min value of the fixed image
+    stats = sitk.StatisticsImageFilter()
+    stats.Execute(fixed_image)
+    min_val_fixed = stats.GetMinimum()
+
+    # Compute the min value of the moving image
+    stats = sitk.StatisticsImageFilter()
+    stats.Execute(fixed_image)
+    min_val_moving = stats.GetMinimum()
+
+    # Pad the fixed image by 20 slices on both cranial and caudal ends:
+    pad_lower = (0, 0, 20)   # (pad_x_before, pad_y_before, pad_z_before)
+    pad_upper = (0, 0, 20)   # (pad_x_after,  pad_y_after,  pad_z_after)
+    padded_fixed = sitk.ConstantPad(
+        fixed_image,
+        pad_lower,
+        pad_upper,
+        constant=min_val_fixed
+    )
+
     # Let user pick Z- and Y-shifts manually (in slices)
     moving_resized = sitk.Resample(
         moving_image,
-        fixed_image,
+        padded_fixed,
         sitk.Transform(),
         sitk.sitkLinear,
-        0.0,
+        min_val_moving,
         moving_image.GetPixelIDValue()
     )
     shift_z_slices, shift_y_slices = run_viewer(
-        fixed_image,
+        padded_fixed,
         moving_resized,
         fixed_modality=fixed_modality,
         moving_modality=moving_modality,
