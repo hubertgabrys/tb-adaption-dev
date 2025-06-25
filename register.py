@@ -580,7 +580,10 @@ def run_viewer(fixed_image, moving_image,
     )
     return overlay.shift_z, overlay.shift_y
 
-def perform_registration(current_directory, patient_id, rtplan_label, selected_series_uid=None, selected_modality=None, confirm_fn=None):
+def perform_registration(current_directory, patient_id, rtplan_label,
+                         selected_series_uid=None, selected_modality=None,
+                         moving_series_uid=None, moving_modality=None,
+                         confirm_fn=None):
     fixed_dir = current_directory
     baseplan_dir = Path(os.environ.get('BASEPLAN_DIR'))
     moving_dir = baseplan_dir / patient_id / rtplan_label
@@ -603,8 +606,16 @@ def perform_registration(current_directory, patient_id, rtplan_label, selected_s
             fixed_modality = "MR"
             fixed_image, fixed_files = read_dicom_series(fixed_dir, "MR")
     print(f"{get_datetime()} Reading moving image from:", moving_dir)
-    moving_modality = "CT"
-    moving_image, moving_files = read_dicom_series(moving_dir, moving_modality)
+    if moving_series_uid:
+        moving_modality = moving_modality or "CT"
+        moving_image, moving_files = read_dicom_series(
+            moving_dir,
+            modality=moving_modality,
+            series_uid=moving_series_uid,
+        )
+    else:
+        moving_modality = moving_modality or "CT"
+        moving_image, moving_files = read_dicom_series(moving_dir, moving_modality)
 
     # Cast & orient
     fixed_image = sitk.Cast(sitk.DICOMOrient(fixed_image, 'LPS'), sitk.sitkFloat32)

@@ -82,7 +82,7 @@ def main():
 
     # Console output widget
     console = ScrolledText(root, state="disabled", width=80)
-    console.grid(row=0, column=2, rowspan=16, sticky="nsew", padx=(10, 10), pady=10)
+    console.grid(row=0, column=2, rowspan=18, sticky="nsew", padx=(10, 10), pady=10)
 
     # Redirect stdout and stderr to the console widget
     sys.stdout = ConsoleRedirector(console)
@@ -122,6 +122,12 @@ def main():
         root.update_idletasks()
         try:
             get_base_plan(patient_id, rtplan_label, rtplan_uid)
+            # List series in the base plan directory
+            base_dir = Path(os.environ.get("BASEPLAN_DIR")) / patient_id / rtplan_label
+            if base_dir.exists():
+                base_series_info.clear()
+                base_series_info.update(list_imaging_series(str(base_dir)))
+                update_bp_dropdown()
             baseplan_status.config(text="\u2705", fg="green")
         except Exception:
             baseplan_status.config(text="\u274C", fg="red")
@@ -129,6 +135,11 @@ def main():
     btn_baseplan = tk.Button(root, text="Get base plan", command=on_get_base_plan)
     btn_baseplan.grid(row=4, column=0, sticky="w", padx=10)
     baseplan_status.grid(row=4, column=1, sticky="w")
+
+    # Store base plan series information
+    base_series_info = {}
+    bp_selected_var = tk.StringVar()
+    bp_selection_map = {}
 
     # Get Imaging button with status label
     images_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -241,13 +252,17 @@ def main():
     btn_resample.grid(row=11, column=0, sticky="w", padx=10, pady=(0, 10))
     resample_status.grid(row=11, column=1, sticky="w")
 
+    # Dropdown for base plan series
+    tk.Label(root, text="Select Base Plan Series").grid(row=12, column=0, columnspan=2, sticky="w", padx=10)
+    bp_dropdown = tk.OptionMenu(root, bp_selected_var, '')
+    bp_dropdown.grid(row=13, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+
     # Dropdown menu for registration series
     selected_var = tk.StringVar()
     selection_map = {}
-
-    tk.Label(root, text="Select Series for Registration").grid(row=12, column=0, columnspan=2, sticky="w", padx=10)
+    tk.Label(root, text="Select Series for Registration").grid(row=14, column=0, columnspan=2, sticky="w", padx=10)
     dropdown = tk.OptionMenu(root, selected_var, '')
-    dropdown.grid(row=13, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    dropdown.grid(row=15, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
     # Register button
     register_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -266,11 +281,16 @@ def main():
             def confirm():
                 return messagebox.askyesno("Registration", "Accept registration result?")
 
-            # Determine which series the user selected in the dropdown
+            # Determine which series the user selected in the dropdowns
             selected_label = selected_var.get()
             selected_uid = selection_map.get(selected_label)
             selected_info = series_info.get(selected_uid, {})
             selected_modality = selected_info.get("modality")
+
+            bp_label = bp_selected_var.get()
+            bp_uid = bp_selection_map.get(bp_label)
+            bp_info = base_series_info.get(bp_uid, {})
+            bp_modality = bp_info.get("modality")
 
             try:
                 rigid_transform = perform_registration(
@@ -279,6 +299,8 @@ def main():
                     rtplan_label,
                     selected_series_uid=selected_uid,
                     selected_modality=selected_modality,
+                    moving_series_uid=bp_uid,
+                    moving_modality=bp_modality,
                     confirm_fn=confirm,
                 )
             except Exception:
@@ -307,13 +329,13 @@ def main():
             on_get_images()
 
     btn_register = tk.Button(root, text="Register", command=on_register)
-    btn_register.grid(row=14, column=0, sticky="w", padx=10, pady=(0, 10))
-    register_status.grid(row=14, column=1, sticky="w")
-    register_progress.grid(row=15, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    btn_register.grid(row=16, column=0, sticky="w", padx=10, pady=(0, 10))
+    register_status.grid(row=16, column=1, sticky="w")
+    register_progress.grid(row=17, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
     register_progress.grid_remove()
 
     def update_dropdown(*args):
-        # show all available series in the dropdown
+        # show all available series in the dropdown for the fixed image
         menu = dropdown["menu"]
         menu.delete(0, 'end')
         selection_map.clear()
@@ -328,6 +350,23 @@ def main():
             selected_var.set(checkbox_texts.get(first_uid, series_info[first_uid]['description']))
         else:
             selected_var.set('')
+
+    def update_bp_dropdown(*args):
+        # populate base plan dropdown
+        menu = bp_dropdown["menu"]
+        menu.delete(0, 'end')
+        bp_selection_map.clear()
+        for uid, info in base_series_info.items():
+            text = f"{info['date']} {info['time']} – {info['modality']} - {info['description']}"
+            bp_selection_map[text] = uid
+            menu.add_command(label=text, command=tk._setit(bp_selected_var, text))
+
+        if base_series_info:
+            first_uid = next(iter(base_series_info))
+            first_info = base_series_info[first_uid]
+            bp_selected_var.set(f"{first_info['date']} {first_info['time']} – {first_info['modality']} - {first_info['description']}")
+        else:
+            bp_selected_var.set('')
 
     root.mainloop()
 
