@@ -335,34 +335,38 @@ def main():
     register_progress.grid_remove()
 
     def update_dropdown(*args):
-        # show all available series in the dropdown for the fixed image
+        # show CT and MR series in the dropdown for the fixed image
         menu = dropdown["menu"]
         menu.delete(0, 'end')
         selection_map.clear()
-        for uid, info in series_info.items():
+        filtered_uids = [uid for uid, info in series_info.items() if info.get('modality') in ('CT', 'MR')]
+        for uid in filtered_uids:
+            info = series_info[uid]
             text = checkbox_texts.get(uid, info['description'])
             selection_map[text] = uid
             menu.add_command(label=text, command=tk._setit(selected_var, text))
 
         # Default to first label
-        if series_info:
-            first_uid = next(iter(series_info))
+        if filtered_uids:
+            first_uid = filtered_uids[0]
             selected_var.set(checkbox_texts.get(first_uid, series_info[first_uid]['description']))
         else:
             selected_var.set('')
 
     def update_bp_dropdown(*args):
-        # populate base plan dropdown
+        # populate base plan dropdown with CT and MR series only
         menu = bp_dropdown["menu"]
         menu.delete(0, 'end')
         bp_selection_map.clear()
-        for uid, info in base_series_info.items():
+        filtered_uids = [uid for uid, info in base_series_info.items() if info.get('modality') in ('CT', 'MR')]
+        for uid in filtered_uids:
+            info = base_series_info[uid]
             text = f"{info['date']} {info['time']} – {info['modality']} - {info['description']}"
             bp_selection_map[text] = uid
             menu.add_command(label=text, command=tk._setit(bp_selected_var, text))
 
-        if base_series_info:
-            first_uid = next(iter(base_series_info))
+        if filtered_uids:
+            first_uid = filtered_uids[0]
             first_info = base_series_info[first_uid]
             bp_selected_var.set(f"{first_info['date']} {first_info['time']} – {first_info['modality']} - {first_info['description']}")
         else:
