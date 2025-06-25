@@ -694,19 +694,18 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     # Build the initial transform from the manual offsets
     initial_transform = sitk.VersorRigid3DTransform()
     initial_transform.SetTranslation((shift_x_mm, shift_y_mm, shift_z_mm))
-    moving_reg = sitk.Resample(moving_image, fixed_image, initial_transform,
-                               sitk.sitkLinear, 0.0, fixed_image.GetPixelIDValue())
     translation = initial_transform.GetTranslation()
     print(f"Initial translation: {translation}")
+    # moving_reg = sitk.Resample(moving_image, fixed_image, initial_transform,
+    #                            sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
     # run_viewer(fixed_image, moving_reg)
-
 
     # Rigid registration
     rigid_transform = perform_rigid_registration(fixed_image, moving_image, initial_transform)
 
     # Resample for visual check
     moving_reg = sitk.Resample(moving_image, fixed_image, rigid_transform,
-                               sitk.sitkLinear, 0.0, fixed_image.GetPixelIDValue())
+                               sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
 
     # Show images after registration
     translation = rigid_transform.GetNthTransform(0).GetTranslation()
