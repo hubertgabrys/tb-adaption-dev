@@ -253,14 +253,14 @@ def main():
     resample_status.grid(row=11, column=1, sticky="w")
 
     # Dropdown for base plan series
-    tk.Label(root, text="Select Base Plan Series").grid(row=12, column=0, columnspan=2, sticky="w", padx=10)
+    tk.Label(root, text="Select Base Plan Series for Registration").grid(row=12, column=0, columnspan=2, sticky="w", padx=10)
     bp_dropdown = tk.OptionMenu(root, bp_selected_var, '')
     bp_dropdown.grid(row=13, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
     # Dropdown menu for registration series
     selected_var = tk.StringVar()
     selection_map = {}
-    tk.Label(root, text="Select Series for Registration").grid(row=14, column=0, columnspan=2, sticky="w", padx=10)
+    tk.Label(root, text="Select Daily Series for Registration").grid(row=14, column=0, columnspan=2, sticky="w", padx=10)
     dropdown = tk.OptionMenu(root, selected_var, '')
     dropdown.grid(row=15, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
