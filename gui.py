@@ -293,7 +293,7 @@ def main():
             bp_modality = bp_info.get("modality")
 
             try:
-                rigid_transform = perform_registration(
+                rigid_transform, used_fixed_uid, used_moving_uid = perform_registration(
                     str(input_dir),
                     patient_id,
                     rtplan_label,
@@ -304,7 +304,7 @@ def main():
                     confirm_fn=confirm,
                 )
             except Exception:
-                rigid_transform = None
+                rigid_transform, used_fixed_uid, used_moving_uid = None, None, None
 
             if rigid_transform:
                 def progress_cb(idx, total):
@@ -317,7 +317,8 @@ def main():
                     patient_id,
                     rtplan_label,
                     rigid_transform,
-                    series_uid=selected_uid,
+                    series_uid=used_fixed_uid,
+                    base_series_uid=used_moving_uid,
                     progress_callback=progress_cb,
                 )
             register_status.config(text="\u2705", fg="green")

@@ -54,7 +54,7 @@ def read_dicom_series(directory, modality="CT", series_uid=None):
         file_names = reader.GetGDCMSeriesFileNames(directory, series_uid)
         reader.SetFileNames(file_names)
         image = reader.Execute()
-        return image, file_names
+        return image, file_names, series_uid
 
     # Set the search patterns based on modality.
     if modality == "CT":
@@ -103,7 +103,7 @@ def read_dicom_series(directory, modality="CT", series_uid=None):
     # Read the selected series.
     reader.SetFileNames(selected_series_file_names)
     image = reader.Execute()
-    return image, selected_series_file_names
+    return image, selected_series_file_names, selected_series
 
 
 def extract_metadata(dicom_file):
@@ -613,7 +613,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     print(f"{get_datetime()} Reading fixed image from:", fixed_dir)
     if selected_series_uid:
         fixed_modality = selected_modality or "CT"
-        fixed_image, fixed_files = read_dicom_series(
+        fixed_image, fixed_files, used_fixed_uid = read_dicom_series(
             fixed_dir,
             modality=fixed_modality,
             series_uid=selected_series_uid,
@@ -621,21 +621,21 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     else:
         try:
             fixed_modality = "CT"
-            fixed_image, fixed_files = read_dicom_series(fixed_dir, "CT")
+            fixed_image, fixed_files, used_fixed_uid = read_dicom_series(fixed_dir, "CT")
         except ValueError:
             fixed_modality = "MR"
-            fixed_image, fixed_files = read_dicom_series(fixed_dir, "MR")
+            fixed_image, fixed_files, used_fixed_uid = read_dicom_series(fixed_dir, "MR")
     print(f"{get_datetime()} Reading moving image from:", moving_dir)
     if moving_series_uid:
         moving_modality = moving_modality or "CT"
-        moving_image, moving_files = read_dicom_series(
+        moving_image, moving_files, used_moving_uid = read_dicom_series(
             moving_dir,
             modality=moving_modality,
             series_uid=moving_series_uid,
         )
     else:
         moving_modality = moving_modality or "CT"
-        moving_image, moving_files = read_dicom_series(moving_dir, moving_modality)
+        moving_image, moving_files, used_moving_uid = read_dicom_series(moving_dir, moving_modality)
 
     # Cast & orient
     fixed_image = sitk.Cast(sitk.DICOMOrient(fixed_image, 'LPS'), sitk.sitkFloat32)
@@ -728,7 +728,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         # so we pass rigid_transform as is.
         create_registration_file(output_reg_file, rigid_transform, fixed_meta, moving_meta,
                                  fixed_files, moving_files)
-        return rigid_transform
+        return rigid_transform, used_fixed_uid, used_moving_uid
     else:
         print(f"{get_datetime()} Registration rejected")
-        return None
+        return None, None, None
