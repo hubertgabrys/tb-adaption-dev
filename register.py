@@ -145,14 +145,14 @@ def perform_rigid_registration(fixed_image, moving_image, initial_transform):
     # )
 
     registration_method = sitk.ImageRegistrationMethod()
-    registration_method.SetMetricAsMattesMutualInformation(numberOfHistogramBins=50)
+    registration_method.SetMetricAsCorrelation()
     registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
-    registration_method.SetMetricSamplingPercentage(0.02, seed=42)
+    registration_method.SetMetricSamplingPercentage(0.1, seed=42)
     registration_method.SetInterpolator(sitk.sitkLinear)
     registration_method.SetOptimizerAsRegularStepGradientDescent(
         learningRate=1.0,
         minStep=1e-6,
-        numberOfIterations=100,  # change back to 300?
+        numberOfIterations=200,
         gradientMagnitudeTolerance=1e-6
     )
     registration_method.SetOptimizerScalesFromPhysicalShift()
