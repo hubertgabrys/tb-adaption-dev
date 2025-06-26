@@ -18,7 +18,7 @@ pydicom_data_dir = os.path.join(os.path.dirname(pydicom.__file__), 'data')
 print(f"Pydicom data directory: {pydicom_data_dir}")
 
 PyInstaller.__main__.run([
-    'main.py',
+    'run_gui.py',
     '--onefile',
     f'--add-data=.env{add_data_sep}.',
     '--hidden-import=pandas',

@@ -22,7 +22,7 @@ def main():
     print("###########################")
     print("#                         #")
     print("#   MRgTB Preprocessing   #")
-    print("#   version 2025.06.18    #")
+    print("#   version 2025.06.25    #")
     print("#                         #")
     print("###########################")
     print()

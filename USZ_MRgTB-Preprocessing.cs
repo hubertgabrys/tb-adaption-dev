@@ -69,7 +69,7 @@ namespace VMS.TPS
             // Do not create cmd window.
             proc.StartInfo.CreateNoWindow = true;
 
-            proc.StartInfo.FileName = @"\\raoariaapps\raoariaapps$\Utilities\tb_adaption\main.exe";
+            proc.StartInfo.FileName = @"\\raoariaapps\raoariaapps$\Utilities\tb_adaption\run_gui.exe";
             proc.StartInfo.WorkingDirectory = @"\\raoariaapps\raoariaapps$\Utilities\tb_adaption";
             proc.StartInfo.Arguments = args;
 
