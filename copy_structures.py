@@ -7,6 +7,59 @@ from pydicom.valuerep import DS
 from tqdm import tqdm
 
 
+def _contour_z_position(contour):
+    """Return the unique z position of a contour or None if inconsistent."""
+    z_vals = {float(contour.ContourData[i]) for i in range(2, len(contour.ContourData), 3)}
+    if len(z_vals) != 1:
+        return None
+    return next(iter(z_vals))
+
+
+def fill_missing_slices(contour_sequence, slice_thickness=None, tol=1e-3):
+    """Return a new contour sequence with gaps filled by copying contours."""
+    if len(contour_sequence) < 2:
+        return contour_sequence
+
+    # Extract z positions and validate contours
+    items = []
+    for c in contour_sequence:
+        z = _contour_z_position(c)
+        if z is None:
+            items.append((None, c))
+        else:
+            items.append((z, c))
+
+    # Sort by z when available
+    items.sort(key=lambda x: (float('inf') if x[0] is None else x[0]))
+    z_positions = [z for z, _ in items if z is not None]
+    if len(z_positions) < 2:
+        return contour_sequence
+
+    diffs = [j - i for i, j in zip(z_positions[:-1], z_positions[1:])]
+    if slice_thickness is None:
+        slice_thickness = min(diffs)
+
+    new_seq = pydicom.sequence.Sequence()
+    for (z1, c1), (z2, c2) in zip(items[:-1], items[1:]):
+        new_seq.append(c1)
+        if z1 is None or z2 is None:
+            continue
+        delta = z2 - z1
+        while delta > slice_thickness + tol:
+            z1 += slice_thickness
+            new_contour = copy.deepcopy(c1)
+            new_data = []
+            for idx in range(0, len(c1.ContourData), 3):
+                new_data.append(c1.ContourData[idx])
+                new_data.append(c1.ContourData[idx + 1])
+                new_data.append(str(float(c1.ContourData[idx + 2]) + slice_thickness))
+            new_contour.ContourData = new_data
+            new_seq.append(new_contour)
+            delta = z2 - z1
+    new_seq.append(items[-1][1])
+    return new_seq
+
+
 def float_to_ds_string(x: float, precision: int = 8) -> DS:
     """
     Convert a float to a DICOM DS (Decimal String) compliant value:
@@ -194,8 +247,8 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
                 for contour in new_roi_contour.ContourSequence:
                     current_data = contour.ContourData
                     new_data = transform_contour_points(rigid_transform, current_data)
-                    # Convert the transformed coordinates to strings as required by DICOM.
                     contour.ContourData = [str(v) for v in new_data]
+                new_roi_contour.ContourSequence = fill_missing_slices(new_roi_contour.ContourSequence)
 
         rtstruct_new.ROIContourSequence.append(new_roi_contour)
         if progress_callback:
