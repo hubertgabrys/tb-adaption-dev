@@ -255,17 +255,44 @@ def main():
     btn_resample.grid(row=11, column=0, sticky="w", padx=10, pady=(0, 10))
     resample_status.grid(row=11, column=1, sticky="w")
 
+    # Rename images and create RTSTRUCTs button
+    rename_status = tk.Label(root, text="", font=("Helvetica", 14))
+
+    def on_rename():
+        rename_status.config(text="\u23F3", fg="orange")  # hourglass
+        root.update_idletasks()
+        try:
+            dicom_series = list_imaging_series(str(input_dir))
+            for uid, info in dicom_series.items():
+                rtstruct_path = os.path.join(str(input_dir), f"RS_{uid}.dcm")
+                if os.path.exists(rtstruct_path):
+                    overwrite = messagebox.askyesno(
+                        "Overwrite RTSTRUCT",
+                        f"RTSTRUCT for series '{info['description']}' exists. Overwrite?",
+                    )
+                    if not overwrite:
+                        continue
+                create_empty_rtstruct(str(input_dir), uid, info["files"])
+            rename_status.config(text="\u2705", fg="green")
+        except Exception:
+            rename_status.config(text="\u274C", fg="red")
+        on_get_images()
+
+    btn_rename = tk.Button(root, text="Rename images", command=on_rename)
+    btn_rename.grid(row=12, column=0, sticky="w", padx=10, pady=(0, 10))
+    rename_status.grid(row=12, column=1, sticky="w")
+
     # Dropdown for base plan series
-    tk.Label(root, text="Select Base Plan Series for Registration").grid(row=12, column=0, columnspan=2, sticky="w", padx=10)
+    tk.Label(root, text="Select Base Plan Series for Registration").grid(row=13, column=0, columnspan=2, sticky="w", padx=10)
     bp_dropdown = tk.OptionMenu(root, bp_selected_var, '')
-    bp_dropdown.grid(row=13, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    bp_dropdown.grid(row=14, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
     # Dropdown menu for registration series
     selected_var = tk.StringVar()
     selection_map = {}
-    tk.Label(root, text="Select Daily Series for Registration").grid(row=14, column=0, columnspan=2, sticky="w", padx=10)
+    tk.Label(root, text="Select Daily Series for Registration").grid(row=15, column=0, columnspan=2, sticky="w", padx=10)
     dropdown = tk.OptionMenu(root, selected_var, '')
-    dropdown.grid(row=15, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    dropdown.grid(row=16, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
     # Register button
     register_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -277,9 +304,6 @@ def main():
         register_progress["value"] = 0
         register_progress.grid()
         try:
-            dicom_series = find_series_uids(str(input_dir))
-            for series_uid, filepaths in dicom_series.items():
-                create_empty_rtstruct(str(input_dir), series_uid, filepaths)
 
             def confirm():
                 return messagebox.askyesno("Registration", "Accept registration result?")
@@ -333,9 +357,9 @@ def main():
             on_get_images()
 
     btn_register = tk.Button(root, text="Register", command=on_register)
-    btn_register.grid(row=16, column=0, sticky="w", padx=10, pady=(0, 10))
-    register_status.grid(row=16, column=1, sticky="w")
-    register_progress.grid(row=17, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    btn_register.grid(row=17, column=0, sticky="w", padx=10, pady=(0, 10))
+    register_status.grid(row=17, column=1, sticky="w")
+    register_progress.grid(row=18, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
     register_progress.grid_remove()
 
     def update_dropdown(*args):
