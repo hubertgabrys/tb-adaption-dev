@@ -362,6 +362,24 @@ def main():
     register_progress.grid(row=18, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
     register_progress.grid_remove()
 
+    # Reset button to clear status indicators
+    def on_reset():
+        for lbl in (
+            baseplan_status,
+            images_status,
+            backup_status,
+            cleanup_status,
+            resample_status,
+            rename_status,
+            register_status,
+        ):
+            lbl.config(text="")
+        register_progress.grid_remove()
+        register_progress["value"] = 0
+
+    btn_reset = tk.Button(root, text="Reset", command=on_reset)
+    btn_reset.grid(row=19, column=0, sticky="w", padx=10, pady=(0, 10))
+
     def update_dropdown(*args):
         # show CT and MR series in the dropdown for the fixed image
         menu = dropdown["menu"]
