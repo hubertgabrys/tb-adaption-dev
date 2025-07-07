@@ -383,6 +383,31 @@ class MultiViewOverlay:
         self.cmap_fixed = plt.get_cmap("gray")
         self.cmap_moving = plt.get_cmap("hot")
 
+        # Dropdown menu to choose colormap for the moving image.  This is
+        # attached to the native GUI window of the Matplotlib figure if
+        # available (works with the TkAgg backend used by ``run_gui.py``).
+        self.dropdown_var = None
+        manager = plt.get_current_fig_manager()
+        if manager and hasattr(manager, "window"):
+            try:
+                import tkinter as tk
+                from tkinter import ttk
+
+                self.dropdown_var = tk.StringVar(value="hot")
+                cmaps = sorted(["hot", "gray", "viridis", "plasma",
+                                "magma", "cividis"])
+                self.dropdown = ttk.Combobox(
+                    manager.window,
+                    values=cmaps,
+                    textvariable=self.dropdown_var,
+                    state="readonly",
+                    width=10,
+                )
+                self.dropdown.pack(side=tk.BOTTOM)
+                self.dropdown.bind("<<ComboboxSelected>>", self.update_cmap)
+            except Exception as exc:  # pragma: no cover - best effort
+                print(f"Could not create colormap dropdown: {exc}")
+
         # initial slice indices
         self.slice_z = self.fixed.shape[0] // 2
         self.slice_y = self.fixed.shape[1] // 2
@@ -557,6 +582,15 @@ class MultiViewOverlay:
     def update_shift_x(self, val):
         self.shift_x = val
         self.update_display()
+
+    def update_cmap(self, event=None):
+        if self.dropdown_var is not None:
+            name = self.dropdown_var.get()
+            try:
+                self.cmap_moving = plt.get_cmap(name)
+            except Exception:  # pragma: no cover - invalid cmap name
+                self.cmap_moving = plt.get_cmap("hot")
+            self.update_display()
 
     def update_display(self):
         self.im_transverse.set_data(self.get_transverse_slice())
