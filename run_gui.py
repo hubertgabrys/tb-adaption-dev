@@ -46,6 +46,16 @@ def rename_all_dicom_files(directory_path: str) -> None:
                 pass
 
 
+def confirm_overwrite(rtstruct_path: str, description: str) -> bool:
+    """Ask the user if an existing RTSTRUCT should be overwritten."""
+    if not os.path.exists(rtstruct_path):
+        return True
+    return messagebox.askyesno(
+        "Overwrite RTSTRUCT",
+        f"RTSTRUCT for series '{description}' exists. Overwrite?",
+    )
+
+
 def get_patient_name(directory_path: str) -> str:
     """Return the PatientName from the first DICOM file found in directory_path."""
     for root_dir, _, files in os.walk(directory_path):
@@ -265,13 +275,8 @@ def main():
             dicom_series = list_imaging_series(str(input_dir))
             for uid, info in dicom_series.items():
                 rtstruct_path = os.path.join(str(input_dir), f"RS_{uid}.dcm")
-                if os.path.exists(rtstruct_path):
-                    overwrite = messagebox.askyesno(
-                        "Overwrite RTSTRUCT",
-                        f"RTSTRUCT for series '{info['description']}' exists. Overwrite?",
-                    )
-                    if not overwrite:
-                        continue
+                if not confirm_overwrite(rtstruct_path, info["description"]):
+                    continue
                 create_empty_rtstruct(str(input_dir), uid, info["files"])
             rename_status.config(text="\u2705", fg="green")
         except Exception:
