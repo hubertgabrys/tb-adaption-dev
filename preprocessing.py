@@ -29,6 +29,8 @@ def rename_file_by_modality(directory_path: str, filename: str, modality: str) -
     """
     Rename the file by prepending the modality if the filename does not already start with it.
     """
+    if modality == "RTSTRUCT":
+        modality = "RS"
     if not filename.startswith(modality):
         new_filename = f"{modality}_{filename}"
         old_filepath = get_file_path(directory_path, filename)
