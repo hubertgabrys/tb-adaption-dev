@@ -298,6 +298,29 @@ def main():
     register_status = tk.Label(root, text="", font=("Helvetica", 14))
     register_progress = ttk.Progressbar(root, length=200, mode="determinate")
 
+    def ask_registration_mode():
+        result = {"mode": None}
+
+        dialog = tk.Toplevel(root)
+        dialog.title("Registration mode")
+        tk.Label(dialog, text="Choose registration mode:").pack(padx=20, pady=(10, 5))
+
+        def choose(mode):
+            result["mode"] = mode
+            dialog.destroy()
+
+        btn_auto = tk.Button(dialog, text="Automatic", width=15,
+                             command=lambda: choose("auto"))
+        btn_semi = tk.Button(dialog, text="Semi-automatic", width=15,
+                             command=lambda: choose("semi"))
+        btn_auto.pack(padx=10, pady=5)
+        btn_semi.pack(padx=10, pady=(0, 10))
+
+        dialog.transient(root)
+        dialog.grab_set()
+        root.wait_window(dialog)
+        return result["mode"]
+
     def on_register():
         register_status.config(text="\u23F3", fg="orange")
         root.update_idletasks()
@@ -319,6 +342,12 @@ def main():
             bp_info = base_series_info.get(bp_uid, {})
             bp_modality = bp_info.get("modality")
 
+            mode = ask_registration_mode()
+            if not mode:
+                register_progress.grid_remove()
+                register_status.config(text="", fg="orange")
+                return
+
             try:
                 rigid_transform, used_fixed_uid, used_moving_uid = perform_registration(
                     str(input_dir),
@@ -329,6 +358,7 @@ def main():
                     moving_series_uid=bp_uid,
                     moving_modality=bp_modality,
                     confirm_fn=confirm,
+                    prealign=(mode == "semi"),
                 )
             except Exception:
                 rigid_transform, used_fixed_uid, used_moving_uid = None, None, None

@@ -603,7 +603,7 @@ def run_viewer(fixed_image, moving_image,
 def perform_registration(current_directory, patient_id, rtplan_label,
                          selected_series_uid=None, selected_modality=None,
                          moving_series_uid=None, moving_modality=None,
-                         confirm_fn=None):
+                         confirm_fn=None, prealign=True):
     fixed_dir = current_directory
     baseplan_dir = Path(os.environ.get('BASEPLAN_DIR'))
     moving_dir = baseplan_dir / patient_id / rtplan_label
@@ -651,45 +651,46 @@ def perform_registration(current_directory, patient_id, rtplan_label,
 
     # Compute the min value of the moving image
     stats = sitk.StatisticsImageFilter()
-    stats.Execute(fixed_image)
+    stats.Execute(moving_image)
     min_val_moving = stats.GetMinimum()
 
-    # Pad the fixed image by 20 slices on both cranial and caudal ends:
-    pad_lower = (0, 0, 20)   # (pad_x_before, pad_y_before, pad_z_before)
-    pad_upper = (0, 0, 20)   # (pad_x_after,  pad_y_after,  pad_z_after)
-    padded_fixed = sitk.ConstantPad(
-        fixed_image,
-        pad_lower,
-        pad_upper,
-        constant=min_val_fixed
-    )
+    if prealign:
+        # Pad the fixed image by 20 slices on both cranial and caudal ends
+        pad_lower = (0, 0, 20)   # (pad_x_before, pad_y_before, pad_z_before)
+        pad_upper = (0, 0, 20)   # (pad_x_after,  pad_y_after,  pad_z_after)
+        padded_fixed = sitk.ConstantPad(
+            fixed_image,
+            pad_lower,
+            pad_upper,
+            constant=min_val_fixed
+        )
 
-    # Let user pick Z- and Y-shifts manually (in slices)
-    moving_resized = sitk.Resample(
-        moving_image,
-        padded_fixed,
-        sitk.Transform(),
-        sitk.sitkLinear,
-        min_val_moving,
-        moving_image.GetPixelIDValue()
-    )
-    shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(
-        padded_fixed,
-        moving_resized,
-        fixed_modality=fixed_modality,
-        moving_modality=moving_modality,
-    )
+        # Let user pick Z-, Y- and X-shifts manually (in slices)
+        moving_resized = sitk.Resample(
+            moving_image,
+            padded_fixed,
+            sitk.Transform(),
+            sitk.sitkLinear,
+            min_val_moving,
+            moving_image.GetPixelIDValue()
+        )
+        shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(
+            padded_fixed,
+            moving_resized,
+            fixed_modality=fixed_modality,
+            moving_modality=moving_modality,
+        )
 
-    # Convert slice shift → mm
-    spacing = fixed_image.GetSpacing()  # (x, y, z)
-    shift_z_mm = shift_z_slices * spacing[2] * (-1)
-    shift_y_mm = shift_y_slices * spacing[1] * (-1)
-    shift_x_mm = shift_x_slices * spacing[0] * (-1)
-    # print(f"Moving image spacing: {moving_image.GetSpacing()} mm")
-    # print(f"Fixed image spacing: {fixed_image.GetSpacing()} mm")
-    print(f"{get_datetime()} User‐defined Z-shift: {shift_z_slices} slices = {shift_z_mm:.2f} mm")
-    print(f"{get_datetime()} User‐defined Y-shift: {shift_y_slices} slices = {shift_y_mm:.2f} mm")
-    print(f"{get_datetime()} User‐defined X-shift: {shift_x_slices} slices = {shift_x_mm:.2f} mm")
+        # Convert slice shift → mm
+        spacing = fixed_image.GetSpacing()  # (x, y, z)
+        shift_z_mm = shift_z_slices * spacing[2] * (-1)
+        shift_y_mm = shift_y_slices * spacing[1] * (-1)
+        shift_x_mm = shift_x_slices * spacing[0] * (-1)
+        print(f"{get_datetime()} User‐defined Z-shift: {shift_z_slices} slices = {shift_z_mm:.2f} mm")
+        print(f"{get_datetime()} User‐defined Y-shift: {shift_y_slices} slices = {shift_y_mm:.2f} mm")
+        print(f"{get_datetime()} User‐defined X-shift: {shift_x_slices} slices = {shift_x_mm:.2f} mm")
+    else:
+        shift_x_mm = shift_y_mm = shift_z_mm = 0.0
 
     # Build the initial transform from the manual offsets
     initial_transform = sitk.VersorRigid3DTransform()
