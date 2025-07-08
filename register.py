@@ -10,7 +10,7 @@ from pydicom.dataset import Dataset, FileDataset
 from pydicom.sequence import Sequence
 from pydicom.uid import generate_uid, ExplicitVRLittleEndian
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider, Dropdown
+from matplotlib.widgets import Slider, RadioButtons
 from utils import get_datetime, load_environment
 
 from dbconnector import DBHandler
@@ -383,12 +383,6 @@ class MultiViewOverlay:
         self.cmap_fixed = plt.get_cmap("gray")
         self.cmap_moving = plt.get_cmap("hot")
 
-        # Matplotlib dropdown menu to choose the colormap for the moving image.
-        cmap_ax = self.fig.add_axes([0.25, 0.14, 0.5, 0.03])
-        cmaps = ["hot", "gray", "viridis", "plasma", "magma", "cividis"]
-        self.dropdown = Dropdown(cmap_ax, "Colormap", cmaps, value="hot")
-        self.dropdown.on_changed(self.update_cmap)
-
         # initial slice indices
         self.slice_z = self.fixed.shape[0] // 2
         self.slice_y = self.fixed.shape[1] // 2
@@ -417,6 +411,11 @@ class MultiViewOverlay:
         self.ax_transverse, self.ax_coronal, self.ax_sagittal = self.axes
         # step size for scroll interactions
         self.scroll_speed = 2
+
+        # Radiobuttons to select the colormap for the moving image
+        cmap_ax = self.fig.add_axes([0.25, 0.14, 0.5, 0.05])
+        self.cmap_buttons = RadioButtons(cmap_ax, ("hot", "gray"), active=0)
+        self.cmap_buttons.on_clicked(self.update_cmap)
 
         for ax in self.axes:
             ax.set_xticks([])
