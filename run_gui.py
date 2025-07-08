@@ -46,9 +46,39 @@ def rename_all_dicom_files(directory_path: str) -> None:
                 pass
 
 
-def confirm_overwrite(rtstruct_path: str, description: str) -> bool:
+def _rtstruct_references_series(ds, series_uid: str) -> bool:
+    """Return True if *ds* references *series_uid*."""
+    try:
+        for fr in ds.ReferencedFrameOfReferenceSequence:
+            for st in fr.RTReferencedStudySequence:
+                for se in st.RTReferencedSeriesSequence:
+                    if getattr(se, "SeriesInstanceUID", None) == series_uid:
+                        return True
+    except Exception:
+        pass
+    return False
+
+
+def find_rtstruct_for_series(directory: str, series_uid: str) -> str | None:
+    """Return path to RTSTRUCT in *directory* referencing *series_uid* if any."""
+    for fname in os.listdir(directory):
+        fpath = os.path.join(directory, fname)
+        if not fname.lower().endswith(".dcm"):
+            continue
+        try:
+            ds = pydicom.dcmread(fpath, stop_before_pixels=True)
+        except Exception:
+            continue
+        if ds.Modality != "RTSTRUCT":
+            continue
+        if _rtstruct_references_series(ds, series_uid):
+            return fpath
+    return None
+
+
+def confirm_overwrite(existing_path: str | None, description: str) -> bool:
     """Ask the user if an existing RTSTRUCT should be overwritten."""
-    if not os.path.exists(rtstruct_path):
+    if not existing_path:
         return True
     return messagebox.askyesno(
         "Overwrite RTSTRUCT",
@@ -274,9 +304,15 @@ def main():
         try:
             dicom_series = list_imaging_series(str(input_dir))
             for uid, info in dicom_series.items():
-                rtstruct_path = os.path.join(str(input_dir), f"RS_{uid}.dcm")
-                if not confirm_overwrite(rtstruct_path, info["description"]):
+                existing = find_rtstruct_for_series(str(input_dir), uid)
+                new_path = os.path.join(str(input_dir), f"RS_{uid}.dcm")
+                if not confirm_overwrite(existing, info["description"]):
                     continue
+                if existing and os.path.abspath(existing) != os.path.abspath(new_path):
+                    try:
+                        os.remove(existing)
+                    except Exception:
+                        pass
                 create_empty_rtstruct(str(input_dir), uid, info["files"])
             rename_status.config(text="\u2705", fg="green")
         except Exception:
