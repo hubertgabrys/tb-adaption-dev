@@ -7,7 +7,7 @@ from pathlib import Path
 import pydicom
 
 from preprocessing import (
-    list_imaging_series,
+    list_dicom_series,
     zip_directory,
     process_single_dicom_file,
 )
@@ -161,7 +161,7 @@ def main():
             base_dir = Path(os.environ.get("BASEPLAN_DIR")) / patient_id / rtplan_label
             if base_dir.exists():
                 base_series_info.clear()
-                base_series_info.update(list_imaging_series(str(base_dir)))
+                base_series_info.update(list_dicom_series(str(base_dir)))
                 update_bp_dropdown()
             baseplan_status.config(text="\u2705", fg="green")
         except Exception:
@@ -189,7 +189,7 @@ def main():
         try:
             rename_all_dicom_files(str(input_dir))
             # Load imaging series only when button is clicked
-            series_info = list_imaging_series(str(input_dir))
+            series_info = list_dicom_series(str(input_dir))
             # Clear previous entries
             for widget in series_frame.winfo_children():
                 widget.destroy()
@@ -294,7 +294,7 @@ def main():
         rename_status.config(text="\u23F3", fg="orange")  # hourglass
         root.update_idletasks()
         try:
-            dicom_series = list_imaging_series(str(input_dir))
+            dicom_series = list_dicom_series(str(input_dir), imaging_only=True)
             for uid, info in dicom_series.items():
                 existing_paths = find_rtstructs_for_series(str(input_dir), uid)
                 new_path = os.path.join(str(input_dir), f"RS_{uid}.dcm")
