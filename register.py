@@ -381,7 +381,7 @@ class MultiViewOverlay:
                                                                   self.moving_modality)
 
         self.cmap_fixed = plt.get_cmap("gray")
-        self.cmap_moving = plt.get_cmap("hot")
+        self.cmap_moving = plt.get_cmap("gray")
 
         # initial slice indices
         self.slice_z = self.fixed.shape[0] // 2
