@@ -17,7 +17,7 @@ from tkinter import ttk
 from resampling import resample_ct
 from utils import load_environment, check_if_ct_present, find_series_uids
 from segmentation import create_empty_rtstruct
-from copy_structures import copy_structures
+from copy_structures import copy_structures, _rtstruct_references_series
 
 
 class ConsoleRedirector:
@@ -46,21 +46,9 @@ def rename_all_dicom_files(directory_path: str) -> None:
                 pass
 
 
-def _rtstruct_references_series(ds, series_uid: str) -> bool:
-    """Return True if *ds* references *series_uid*."""
-    try:
-        for fr in ds.ReferencedFrameOfReferenceSequence:
-            for st in fr.RTReferencedStudySequence:
-                for se in st.RTReferencedSeriesSequence:
-                    if getattr(se, "SeriesInstanceUID", None) == series_uid:
-                        return True
-    except Exception:
-        pass
-    return False
-
-
-def find_rtstruct_for_series(directory: str, series_uid: str) -> str | None:
-    """Return path to RTSTRUCT in *directory* referencing *series_uid* if any."""
+def find_rtstructs_for_series(directory: str, series_uid: str) -> list[str]:
+    """Return paths to RTSTRUCT files in *directory* referencing *series_uid*."""
+    matches: list[str] = []
     for fname in os.listdir(directory):
         fpath = os.path.join(directory, fname)
         if not fname.lower().endswith(".dcm"):
@@ -72,17 +60,21 @@ def find_rtstruct_for_series(directory: str, series_uid: str) -> str | None:
         if ds.Modality != "RTSTRUCT":
             continue
         if _rtstruct_references_series(ds, series_uid):
-            return fpath
-    return None
+            matches.append(fpath)
+    return matches
 
 
-def confirm_overwrite(existing_path: str | None, description: str) -> bool:
-    """Ask the user if an existing RTSTRUCT should be overwritten."""
-    if not existing_path:
+def confirm_overwrite(existing_paths: list[str], description: str) -> bool:
+    """Ask whether RTSTRUCTs referencing a series should be overwritten."""
+    if not existing_paths:
         return True
+    count = len(existing_paths)
     return messagebox.askyesno(
         "Overwrite RTSTRUCT",
-        f"RTSTRUCT for series '{description}' exists. Overwrite?",
+        (
+            f"{count} RTSTRUCT file{'s' if count > 1 else ''} for series "
+            f"'{description}' exist. Overwrite?"
+        ),
     )
 
 
@@ -304,13 +296,15 @@ def main():
         try:
             dicom_series = list_imaging_series(str(input_dir))
             for uid, info in dicom_series.items():
-                existing = find_rtstruct_for_series(str(input_dir), uid)
+                existing_paths = find_rtstructs_for_series(str(input_dir), uid)
                 new_path = os.path.join(str(input_dir), f"RS_{uid}.dcm")
-                if not confirm_overwrite(existing, info["description"]):
+                if not confirm_overwrite(existing_paths, info["description"]):
                     continue
-                if existing and os.path.abspath(existing) != os.path.abspath(new_path):
+                for old in existing_paths:
+                    if os.path.abspath(old) == os.path.abspath(new_path):
+                        continue
                     try:
-                        os.remove(existing)
+                        os.remove(old)
                     except Exception:
                         pass
                 create_empty_rtstruct(str(input_dir), uid, info["files"])
