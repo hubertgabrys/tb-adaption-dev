@@ -7,7 +7,7 @@ from pathlib import Path
 import pydicom
 
 from preprocessing import (
-    list_imaging_series,
+    list_dicom_series,
     zip_directory,
     process_single_dicom_file,
 )
@@ -17,7 +17,7 @@ from tkinter import ttk
 from resampling import resample_ct
 from utils import load_environment, check_if_ct_present, find_series_uids
 from segmentation import create_empty_rtstruct
-from copy_structures import copy_structures
+from copy_structures import copy_structures, _rtstruct_references_series
 
 
 class ConsoleRedirector:
@@ -44,6 +44,38 @@ def rename_all_dicom_files(directory_path: str) -> None:
                 process_single_dicom_file(root_dir, fname)
             except Exception:
                 pass
+
+
+def find_rtstructs_for_series(directory: str, series_uid: str) -> list[str]:
+    """Return paths to RTSTRUCT files in *directory* referencing *series_uid*."""
+    matches: list[str] = []
+    for fname in os.listdir(directory):
+        fpath = os.path.join(directory, fname)
+        if not fname.lower().endswith(".dcm"):
+            continue
+        try:
+            ds = pydicom.dcmread(fpath, stop_before_pixels=True)
+        except Exception:
+            continue
+        if ds.Modality != "RTSTRUCT":
+            continue
+        if _rtstruct_references_series(ds, series_uid):
+            matches.append(fpath)
+    return matches
+
+
+def confirm_overwrite(existing_paths: list[str], description: str) -> bool:
+    """Ask whether RTSTRUCTs referencing a series should be overwritten."""
+    if not existing_paths:
+        return True
+    count = len(existing_paths)
+    return messagebox.askyesno(
+        "Overwrite RTSTRUCT",
+        (
+            f"{count} RTSTRUCT file{'s' if count > 1 else ''} for series "
+            f"'{description}' exist. Overwrite?"
+        ),
+    )
 
 
 def get_patient_name(directory_path: str) -> str:
@@ -129,7 +161,7 @@ def main():
             base_dir = Path(os.environ.get("BASEPLAN_DIR")) / patient_id / rtplan_label
             if base_dir.exists():
                 base_series_info.clear()
-                base_series_info.update(list_imaging_series(str(base_dir)))
+                base_series_info.update(list_dicom_series(str(base_dir)))
                 update_bp_dropdown()
             baseplan_status.config(text="\u2705", fg="green")
         except Exception:
@@ -157,7 +189,7 @@ def main():
         try:
             rename_all_dicom_files(str(input_dir))
             # Load imaging series only when button is clicked
-            series_info = list_imaging_series(str(input_dir))
+            series_info = list_dicom_series(str(input_dir))
             # Clear previous entries
             for widget in series_frame.winfo_children():
                 widget.destroy()
@@ -262,16 +294,19 @@ def main():
         rename_status.config(text="\u23F3", fg="orange")  # hourglass
         root.update_idletasks()
         try:
-            dicom_series = list_imaging_series(str(input_dir))
+            dicom_series = list_dicom_series(str(input_dir), imaging_only=True)
             for uid, info in dicom_series.items():
-                rtstruct_path = os.path.join(str(input_dir), f"RS_{uid}.dcm")
-                if os.path.exists(rtstruct_path):
-                    overwrite = messagebox.askyesno(
-                        "Overwrite RTSTRUCT",
-                        f"RTSTRUCT for series '{info['description']}' exists. Overwrite?",
-                    )
-                    if not overwrite:
+                existing_paths = find_rtstructs_for_series(str(input_dir), uid)
+                new_path = os.path.join(str(input_dir), f"RS_{uid}.dcm")
+                if not confirm_overwrite(existing_paths, info["description"]):
+                    continue
+                for old in existing_paths:
+                    if os.path.abspath(old) == os.path.abspath(new_path):
                         continue
+                    try:
+                        os.remove(old)
+                    except Exception:
+                        pass
                 create_empty_rtstruct(str(input_dir), uid, info["files"])
             rename_status.config(text="\u2705", fg="green")
         except Exception:

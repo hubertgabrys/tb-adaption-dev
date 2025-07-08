@@ -29,6 +29,8 @@ def rename_file_by_modality(directory_path: str, filename: str, modality: str) -
     """
     Rename the file by prepending the modality if the filename does not already start with it.
     """
+    if modality == "RTSTRUCT":
+        modality = "RS"
     if not filename.startswith(modality):
         new_filename = f"{modality}_{filename}"
         old_filepath = get_file_path(directory_path, filename)
@@ -94,12 +96,23 @@ def zip_directory(directory_path, output_zip_path, password=None):
     finally:
         zipf.close()
 
-def list_imaging_series(dir_path: str) -> dict:
-    """
-    Scan dir_path for DICOM files, group them by SeriesInstanceUID,
-    print each series (date, time, description, count),
-    and return a dict:
-      { uid: { date, time, description, files: [file1, file2, …] } }
+def list_dicom_series(dir_path: str, imaging_only: bool = False) -> dict:
+    """Return information about DICOM series found under *dir_path*.
+
+    If *imaging_only* is ``True`` only imaging modalities (e.g. CT, MR) are
+    included; non-imaging series like ``RTSTRUCT`` or ``REG`` are skipped.
+
+    The returned dictionary is structured as::
+
+        {
+            uid: {
+                "date": str,
+                "time": str,
+                "modality": str,
+                "description": str,
+                "files": [file1, file2, ...],
+            }
+        }
     """
     if not os.path.exists(dir_path):
         print(f"Directory does not exist: {dir_path}")
@@ -119,6 +132,10 @@ def list_imaging_series(dir_path: str) -> dict:
             try:
                 ds = pydicom.dcmread(fpath, stop_before_pixels=True, force=True)
             except Exception:
+                continue
+
+            modality = getattr(ds, "Modality", "").strip()
+            if imaging_only and modality in ("REG", "RTSTRUCT"):
                 continue
 
             uid = getattr(ds, "SeriesInstanceUID", None)
@@ -160,7 +177,7 @@ def list_imaging_series(dir_path: str) -> dict:
 
 def confirm_and_delete_old_series(series_info: dict):
     """
-    Given the dict from list_imaging_series, finds all files whose
+    Given the dict from ``list_dicom_series``, finds all files whose
     SeriesDate is not today, prompts the user, and deletes them if
     the user confirms.
     """
@@ -195,7 +212,7 @@ def confirm_and_delete_old_series(series_info: dict):
 
 
 def check_input_directory(directory_path: str) -> None:
-    series = list_imaging_series(directory_path)
+    series = list_dicom_series(directory_path, imaging_only=False)
     confirm_and_delete_old_series(series)
 
 def preprocess_input_directory(directory_path: str) -> None:
