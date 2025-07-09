@@ -136,13 +136,16 @@ def perform_rigid_registration(fixed_image, moving_image, initial_transform):
         fixed_processed = fixed_image
         moving_processed = moving_image
 
-    # # Geometry-based initializer using a VersorRigid3DTransform
-    # initial_transform = sitk.CenteredTransformInitializer(
-    #     fixed_processed,
-    #     moving_processed,
-    #     sitk.VersorRigid3DTransform(),
-    #     sitk.CenteredTransformInitializerFilter.MOMENTS
-    # )
+    # If no manual offsets were provided, estimate a better starting transform
+    # from the image geometry and intensity moments. This helps the optimizer
+    # converge when the images are far apart.
+    if np.allclose(initial_transform.GetTranslation(), (0.0, 0.0, 0.0)):
+        initial_transform = sitk.CenteredTransformInitializer(
+            fixed_processed,
+            moving_processed,
+            sitk.VersorRigid3DTransform(),
+            sitk.CenteredTransformInitializerFilter.MOMENTS,
+        )
 
     registration_method = sitk.ImageRegistrationMethod()
     registration_method.SetMetricAsCorrelation()
@@ -690,6 +693,8 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         print(f"{get_datetime()} User‐defined Y-shift: {shift_y_slices} slices = {shift_y_mm:.2f} mm")
         print(f"{get_datetime()} User‐defined X-shift: {shift_x_slices} slices = {shift_x_mm:.2f} mm")
     else:
+        # Automatic mode: start with no manual translation. A geometry-based
+        # initializer will be computed inside perform_rigid_registration.
         shift_x_mm = shift_y_mm = shift_z_mm = 0.0
 
     # Build the initial transform from the manual offsets
