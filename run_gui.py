@@ -356,11 +356,14 @@ def main():
         root.wait_window(dialog)
         return result["mode"]
 
+    last_rigid_transform = None
+    last_fixed_uid = None
+    last_moving_uid = None
+
     def on_register():
+        nonlocal last_rigid_transform, last_fixed_uid, last_moving_uid
         register_status.config(text="\u23F3", fg="orange")
         root.update_idletasks()
-        register_progress["value"] = 0
-        register_progress.grid()
         try:
 
             def confirm():
@@ -379,7 +382,6 @@ def main():
 
             mode = ask_registration_mode()
             if not mode:
-                register_progress.grid_remove()
                 register_status.config(text="", fg="orange")
                 return
 
@@ -399,32 +401,62 @@ def main():
                 rigid_transform, used_fixed_uid, used_moving_uid = None, None, None
 
             if rigid_transform:
-                def progress_cb(idx, total):
-                    register_progress["maximum"] = total
-                    register_progress["value"] = idx
-                    root.update_idletasks()
-
-                copy_structures(
-                    str(input_dir),
-                    patient_id,
-                    rtplan_label,
-                    rigid_transform,
-                    series_uid=used_fixed_uid,
-                    base_series_uid=used_moving_uid,
-                    progress_callback=progress_cb,
-                )
-            register_status.config(text="\u2705", fg="green")
+                last_rigid_transform = rigid_transform
+                last_fixed_uid = used_fixed_uid
+                last_moving_uid = used_moving_uid
+                register_status.config(text="\u2705", fg="green")
+            else:
+                register_status.config(text="\u274C", fg="red")
         except Exception:
             register_status.config(text="\u274C", fg="red")
         finally:
-            register_progress.grid_remove()
             # refresh displayed series after cleanup
             on_get_images()
 
     btn_register = tk.Button(root, text="Register", command=on_register)
     btn_register.grid(row=17, column=0, sticky="w", padx=10, pady=(0, 10))
     register_status.grid(row=17, column=1, sticky="w")
-    register_progress.grid(row=18, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+
+    copy_status = tk.Label(root, text="", font=("Helvetica", 14))
+
+    def on_copy_structures():
+        if last_rigid_transform is None:
+            messagebox.showerror("Copy structures", "Please perform registration first.")
+            copy_status.config(text="\u274C", fg="red")
+            return
+
+        copy_status.config(text="\u23F3", fg="orange")
+        root.update_idletasks()
+        register_progress["value"] = 0
+        register_progress.grid()
+
+        try:
+            def progress_cb(idx, total):
+                register_progress["maximum"] = total
+                register_progress["value"] = idx
+                root.update_idletasks()
+
+            copy_structures(
+                str(input_dir),
+                patient_id,
+                rtplan_label,
+                last_rigid_transform,
+                series_uid=last_fixed_uid,
+                base_series_uid=last_moving_uid,
+                progress_callback=progress_cb,
+            )
+            copy_status.config(text="\u2705", fg="green")
+        except Exception:
+            copy_status.config(text="\u274C", fg="red")
+        finally:
+            register_progress.grid_remove()
+            on_get_images()
+
+    btn_copy_structures = tk.Button(root, text="Copy structures", command=on_copy_structures)
+    btn_copy_structures.grid(row=18, column=0, sticky="w", padx=10, pady=(0, 10))
+    copy_status.grid(row=18, column=1, sticky="w")
+
+    register_progress.grid(row=19, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
     register_progress.grid_remove()
 
     # Reset button to clear status indicators
@@ -443,7 +475,7 @@ def main():
         register_progress["value"] = 0
 
     btn_reset = tk.Button(root, text="Reset", command=on_reset)
-    btn_reset.grid(row=19, column=0, sticky="w", padx=10, pady=(0, 10))
+    btn_reset.grid(row=20, column=0, sticky="w", padx=10, pady=(0, 10))
 
     def update_dropdown(*args):
         # show CT and MR series in the dropdown for the fixed image
