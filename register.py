@@ -404,6 +404,9 @@ class MultiViewOverlay:
         self.cmap_fixed = plt.get_cmap("gray")
         self.cmap_moving = plt.get_cmap("gray")
 
+        # fill value used when shifts move data outside the field of view
+        self.fill_value = min(float(np.min(self.fixed)), float(np.min(self.moving)))
+
         # initial slice indices
         self.slice_z = self.fixed.shape[0] // 2
         self.slice_y = self.fixed.shape[1] // 2
@@ -537,19 +540,42 @@ class MultiViewOverlay:
                                          self.moving_vmin, self.moving_vmax)
         return (1 - self.alpha) * fixed_rgb + self.alpha * moving_rgb
 
+    def _shift_slice(self, array, shift_y=0, shift_x=0):
+        """Shift a 2-D slice without wrapping around."""
+        shift_y = int(shift_y)
+        shift_x = int(shift_x)
+        out = np.full_like(array, self.fill_value)
+
+        if shift_y >= 0:
+            ys = slice(0, array.shape[0] - shift_y)
+            yd = slice(shift_y, array.shape[0])
+        else:
+            ys = slice(-shift_y, array.shape[0])
+            yd = slice(0, array.shape[0] + shift_y)
+
+        if shift_x >= 0:
+            xs = slice(0, array.shape[1] - shift_x)
+            xd = slice(shift_x, array.shape[1])
+        else:
+            xs = slice(-shift_x, array.shape[1])
+            xd = slice(0, array.shape[1] + shift_x)
+
+        out[yd, xd] = array[ys, xs]
+        return out
+
     def get_transverse_slice(self):
         z = int(self.slice_z)
         f_slc = self.fixed[z, :, :]
 
-        # Select only the required slice from the moving volume and
-        # roll the 2-D slice instead of the whole 3-D array to avoid
-        # copying large volumes on every update.
-        mz = (z - int(self.shift_z)) % self.moving.shape[0]
-        m_slc = self.moving[mz, :, :]
-        if self.shift_y:
-            m_slc = np.roll(m_slc, int(self.shift_y), axis=0)
-        if self.shift_x:
-            m_slc = np.roll(m_slc, int(self.shift_x), axis=1)
+        # slice from the moving volume respecting the shift without wrapping
+        mz = z - int(self.shift_z)
+        if 0 <= mz < self.moving.shape[0]:
+            m_slc = self.moving[mz, :, :]
+        else:
+            m_slc = np.full_like(self.moving[0], self.fill_value)
+
+        if self.shift_y or self.shift_x:
+            m_slc = self._shift_slice(m_slc, self.shift_y, self.shift_x)
 
         return self.blend_slices(f_slc, m_slc)
 
@@ -558,13 +584,15 @@ class MultiViewOverlay:
         y = int(self.slice_y)
         f_slc = self.fixed[:, y, :]
 
-        # Pick the appropriate slice before rolling to keep memory use low
-        my = (y - int(self.shift_y)) % self.moving.shape[1]
-        m_slc = self.moving[:, my, :]
-        if self.shift_z:
-            m_slc = np.roll(m_slc, int(self.shift_z), axis=0)
-        if self.shift_x:
-            m_slc = np.roll(m_slc, int(self.shift_x), axis=1)
+        # select slice from moving volume without wrap-around
+        my = y - int(self.shift_y)
+        if 0 <= my < self.moving.shape[1]:
+            m_slc = self.moving[:, my, :]
+        else:
+            m_slc = np.full_like(self.moving[:, 0, :], self.fill_value)
+
+        if self.shift_z or self.shift_x:
+            m_slc = self._shift_slice(m_slc, self.shift_z, self.shift_x)
 
         return self.blend_slices(f_slc, m_slc)
 
@@ -572,12 +600,14 @@ class MultiViewOverlay:
         x = int(self.slice_x)
         f_slc = self.fixed[:, :, x]
 
-        mx = (x - int(self.shift_x)) % self.moving.shape[2]
-        m_slc = self.moving[:, :, mx]
-        if self.shift_z:
-            m_slc = np.roll(m_slc, int(self.shift_z), axis=0)
-        if self.shift_y:
-            m_slc = np.roll(m_slc, int(self.shift_y), axis=1)
+        mx = x - int(self.shift_x)
+        if 0 <= mx < self.moving.shape[2]:
+            m_slc = self.moving[:, :, mx]
+        else:
+            m_slc = np.full_like(self.moving[:, :, 0], self.fill_value)
+
+        if self.shift_z or self.shift_y:
+            m_slc = self._shift_slice(m_slc, self.shift_z, self.shift_y)
 
         return self.blend_slices(f_slc, m_slc)
 
