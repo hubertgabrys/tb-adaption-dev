@@ -124,7 +124,19 @@ def extract_metadata(dicom_file):
     meta['StudyID'] = ds.get("StudyID", "Anonymous")
     return meta
 
-def perform_rigid_registration(fixed_image, moving_image, initial_transform):
+def perform_rigid_registration(
+    fixed_image,
+    moving_image,
+    initial_transform,
+    fixed_modality="CT",
+    moving_modality="CT",
+):
+    """Perform rigid registration of two images.
+
+    The metric is chosen automatically based on modality:
+    cross-correlation for same-modality pairs and mutual information for
+    cross-modality pairs.
+    """
     print(f"{get_datetime()} Initializing registration...")
 
     # Clip intensities to [-160, 240] to reduce outliers
@@ -148,7 +160,13 @@ def perform_rigid_registration(fixed_image, moving_image, initial_transform):
         )
 
     registration_method = sitk.ImageRegistrationMethod()
-    registration_method.SetMetricAsCorrelation()
+    # Use correlation for same-modality registrations, mutual information
+    # otherwise. Mutual information is more robust for MR-CT registrations
+    # where intensities do not correspond directly.
+    if fixed_modality == moving_modality:
+        registration_method.SetMetricAsCorrelation()
+    else:
+        registration_method.SetMetricAsMattesMutualInformation(50)
     registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
     registration_method.SetMetricSamplingPercentage(0.01, seed=42)
     registration_method.SetInterpolator(sitk.sitkLinear)
@@ -725,7 +743,13 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     # run_viewer(fixed_image, moving_reg)
 
     # Rigid registration
-    rigid_transform = perform_rigid_registration(fixed_image, moving_image, initial_transform)
+    rigid_transform = perform_rigid_registration(
+        fixed_image,
+        moving_image,
+        initial_transform,
+        fixed_modality=fixed_modality,
+        moving_modality=moving_modality,
+    )
 
     # Resample for visual check
     moving_reg = sitk.Resample(moving_image, fixed_image, rigid_transform,
