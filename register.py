@@ -447,19 +447,26 @@ class MultiViewOverlay:
             origin='upper',
             extent=self.extent_transverse,
         )
+        # Ensure the full field of view is visible
+        self.ax_transverse.set_xlim(self.extent_transverse[0], self.extent_transverse[1])
+        self.ax_transverse.set_ylim(self.extent_transverse[2], self.extent_transverse[3])
         self.ax_transverse.set_title('Transverse (Axial)')
         self.im_coronal = self.ax_coronal.imshow(
             self.get_coronal_slice(),
             origin='lower',
             extent=self.extent_coronal,
         )
+        self.ax_coronal.set_xlim(self.extent_coronal[0], self.extent_coronal[1])
+        self.ax_coronal.set_ylim(self.extent_coronal[2], self.extent_coronal[3])
         self.ax_coronal   .set_title('Coronal')
         self.im_sagittal = self.ax_sagittal.imshow(
             self.get_sagittal_slice(),
             origin='lower',
             extent=self.extent_sagittal,
         )
-        self.ax_sagittal .set_title('Sagittal')
+        self.ax_sagittal.set_xlim(self.extent_sagittal[0], self.extent_sagittal[1])
+        self.ax_sagittal.set_ylim(self.extent_sagittal[2], self.extent_sagittal[3])
+        self.ax_sagittal.set_title('Sagittal')
 
         # slice text
         self.text_transverse = self.ax_transverse.text(
