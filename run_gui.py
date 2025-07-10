@@ -469,6 +469,7 @@ def main():
             resample_status,
             rename_status,
             register_status,
+            copy_status,
         ):
             lbl.config(text="")
         register_progress.grid_remove()
