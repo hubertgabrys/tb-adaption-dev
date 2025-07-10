@@ -522,27 +522,45 @@ class MultiViewOverlay:
     def get_transverse_slice(self):
         z = int(self.slice_z)
         f_slc = self.fixed[z, :, :]
-        m_vol = np.roll(self.moving, int(self.shift_z), axis=0)
-        m_slc = m_vol[z, :, :]
-        m_slc = np.roll(m_slc, int(self.shift_y), axis=0)
-        m_slc = np.roll(m_slc, int(self.shift_x), axis=1)
+
+        # Select only the required slice from the moving volume and
+        # roll the 2-D slice instead of the whole 3-D array to avoid
+        # copying large volumes on every update.
+        mz = (z - int(self.shift_z)) % self.moving.shape[0]
+        m_slc = self.moving[mz, :, :]
+        if self.shift_y:
+            m_slc = np.roll(m_slc, int(self.shift_y), axis=0)
+        if self.shift_x:
+            m_slc = np.roll(m_slc, int(self.shift_x), axis=1)
+
         return self.blend_slices(f_slc, m_slc)
 
     def get_coronal_slice(self):
         # shift affects Z (axis 0) and Y (axis 1)
-        f_slc = self.fixed[:, self.slice_y, :]
-        m_vol = np.roll(self.moving, int(self.shift_z), axis=0)
-        m_vol = np.roll(m_vol, int(self.shift_y), axis=1)
-        m_vol = np.roll(m_vol, int(self.shift_x), axis=2)
-        m_slc = m_vol[:, self.slice_y, :]
+        y = int(self.slice_y)
+        f_slc = self.fixed[:, y, :]
+
+        # Pick the appropriate slice before rolling to keep memory use low
+        my = (y - int(self.shift_y)) % self.moving.shape[1]
+        m_slc = self.moving[:, my, :]
+        if self.shift_z:
+            m_slc = np.roll(m_slc, int(self.shift_z), axis=0)
+        if self.shift_x:
+            m_slc = np.roll(m_slc, int(self.shift_x), axis=1)
+
         return self.blend_slices(f_slc, m_slc)
 
     def get_sagittal_slice(self):
-        f_slc = self.fixed[:, :, self.slice_x]
-        m_vol = np.roll(self.moving, int(self.shift_z), axis=0)
-        m_vol = np.roll(m_vol, int(self.shift_y), axis=1)
-        m_vol = np.roll(m_vol, int(self.shift_x), axis=2)
-        m_slc = m_vol[:, :, self.slice_x]
+        x = int(self.slice_x)
+        f_slc = self.fixed[:, :, x]
+
+        mx = (x - int(self.shift_x)) % self.moving.shape[2]
+        m_slc = self.moving[:, :, mx]
+        if self.shift_z:
+            m_slc = np.roll(m_slc, int(self.shift_z), axis=0)
+        if self.shift_y:
+            m_slc = np.roll(m_slc, int(self.shift_y), axis=1)
+
         return self.blend_slices(f_slc, m_slc)
 
     def update_alpha(self, val):
