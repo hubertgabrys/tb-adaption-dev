@@ -160,12 +160,14 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
 
         # Skip if there are no contours associated with this ROI
         if number not in roi_number_has_contour:
+            print(f"Skipping ROI {number} ({name}) because it has no contour data")
             return True
 
         # Check for ROI names ending with pattern like "_1a" and ensure it matches the plan label
         if plan_suffix:
             match_suffix = re.search(r"_(\d[a-z])$", name_lower)
             if match_suffix and match_suffix.group(0) != plan_suffix:
+                print(f"Skipping ROI {number} ({name}) because it does not match the plan suffix")
                 return True
 
         # Special handling for PTV ROIs ending with "+2cm_ph" (should not be skipped due to "_ph")
@@ -173,11 +175,14 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
             pass  # allowed
         else:
             if name_lower.startswith("zzz") or name_lower.endswith("_ph"):
+                print(f"Skipping ROI {number} ({name})")
                 return True
 
         if name_lower in {"body", "couchsurface", "couchinterior"}:
+            print(f"Skipping ROI {number} ({name})")
             return True
         if "ring" in name_lower or "body" in name_lower:
+            print(f"Skipping ROI {number} ({name})")
             return True
 
         return False
@@ -226,9 +231,11 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
         roi_name = roi_lookup.get(ref_roi_num, "")
         if skip_contour(roi_name):
             # For ROIs starting with "PTV", remove the Contour Sequence.
+            print(f"Copying ROI {ref_roi_num} ({roi_name}) without contour sequence")
             new_roi_contour.ContourSequence = pydicom.sequence.Sequence()
         else:
             # Transform the coordinates for each contour within this ROI contour item.
+            print(f"Copying ROI {ref_roi_num} ({roi_name})")
             if hasattr(new_roi_contour, "ContourSequence"):
                 for contour in new_roi_contour.ContourSequence:
                     current_data = contour.ContourData
