@@ -1,5 +1,6 @@
 import copy
 import os
+import re
 from pathlib import Path
 
 import pydicom
@@ -123,6 +124,10 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
     rtstruct_base = read_base_rtstruct(patient_id, rtplan_label, series_uid=base_series_uid)
     rtstruct_new, rtstruct_new_filename = read_new_rtstruct(current_directory, series_uid)
 
+    # Extract plan suffix (e.g. "_1a") from the plan label if present
+    match = re.search(r"_(\d[a-z])$", rtplan_label.lower())
+    plan_suffix = match.group(0) if match else None
+
     # Get the inverse of the transform
     rigid_transform = rigid_transform.GetInverse()
 
@@ -132,23 +137,58 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
     rtstruct_new.ROIContourSequence = pydicom.sequence.Sequence()
     rtstruct_new.RTROIObservationsSequence = pydicom.sequence.Sequence()
 
-    # Helper function: determine if an ROI name should be skipped.
-    def skip_roi(name):
-        name_lower = name.lower()
-        # Do not skip if this is the special ROI that always starts with "ptv" and ends with "+2cm_ph"
-        if name_lower.startswith("ptv") and name_lower.endswith("+2cm_ph"):
-            return False
-        # For all other cases, skip if it starts with "zzz_", or ends with "_ph", or is in the specified list
-        return name_lower.startswith("zzz_") or name_lower.endswith("_ph") or (name_lower in ["body", "couchsurface", "couchinterior"])
+    # Determine which ROI numbers contain contour data
+    roi_number_has_contour = set()
+    if hasattr(rtstruct_base, "ROIContourSequence"):
+        for roi_contour in rtstruct_base.ROIContourSequence:
+            num = getattr(roi_contour, "ReferencedROINumber", None)
+            if num is None:
+                continue
+            has_data = False
+            if hasattr(roi_contour, "ContourSequence"):
+                for contour in roi_contour.ContourSequence:
+                    data = getattr(contour, "ContourData", [])
+                    if data:
+                        has_data = True
+                        break
+            if has_data:
+                roi_number_has_contour.add(num)
 
-    # Helper function: determine if an ROI's Contour Sequence should be skipped (i.e., left empty).
+    # Helper function: determine if an ROI name should be skipped.
+    def skip_roi(name, number):
+        name_lower = name.lower()
+
+        # Skip if there are no contours associated with this ROI
+        if number not in roi_number_has_contour:
+            return True
+
+        # Check for ROI names ending with pattern like "_1a" and ensure it matches the plan label
+        if plan_suffix:
+            match_suffix = re.search(r"_(\d[a-z])$", name_lower)
+            if match_suffix and match_suffix.group(0) != plan_suffix:
+                return True
+
+        # Special handling for PTV ROIs ending with "+2cm_ph" (should not be skipped due to "_ph")
+        if name_lower.startswith("ptv") and name_lower.endswith("+2cm_ph"):
+            pass  # allowed
+        else:
+            if name_lower.startswith("zzz") or name_lower.endswith("_ph"):
+                return True
+
+        if name_lower in {"body", "couchsurface", "couchinterior"}:
+            return True
+        if "ring" in name_lower or "body" in name_lower:
+            return True
+
+        return False
+
+    # Helper function: determine if an ROI's Contour Sequence should be removed.
     def skip_contour(name):
         name_lower = name.lower()
-        # If the ROI is the special case (starts with "ptv" and ends with "+2cm_ph"), do not skip it.
-        if name_lower.startswith("ptv") and name_lower.endswith("+2cm_ph"):
-            return False
-        # Otherwise, skip the contour if it starts with "ptv"
-        return name_lower.startswith("ptv")
+        # Keep contours only for PTVs ending with "+2cm_ph"
+        if name_lower.startswith("ptv") and not name_lower.endswith("+2cm_ph"):
+            return True
+        return False
 
     # --- Step 1: Filter Structure Set ROI Sequence ---
     # Process each ROI item based on its ROI Name (tag 3006,0026).
@@ -158,10 +198,9 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
     roi_lookup = {}
     for roi in rtstruct_base.StructureSetROISequence:
         roi_name = getattr(roi, "ROIName", "")
-        if skip_roi(roi_name):
-            continue
-        # Get the ROI Number (tag 3006,0022)
         roi_number = getattr(roi, "ROINumber", None)
+        if skip_roi(roi_name, roi_number):
+            continue
         if roi_number is not None:
             approved_roi_numbers.add(roi_number)
             roi_lookup[roi_number] = roi_name  # store the name
