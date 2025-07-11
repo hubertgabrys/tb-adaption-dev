@@ -11,7 +11,7 @@ from pydicom.sequence import Sequence
 from pydicom.uid import generate_uid, ExplicitVRLittleEndian
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
-from utils import get_datetime, load_environment
+from utils import get_datetime, load_environment, configure_sitk_threads
 
 from dbconnector import DBHandler
 
@@ -20,6 +20,7 @@ from dbconnector import DBHandler
 # --------------------------------------------------------------------
 
 load_environment(".env")
+configure_sitk_threads()
 
 def get_base_plan(patient_id, rtplan_label, rtplan_uid):
     baseplan_dir = Path(os.environ.get('BASEPLAN_DIR'))
@@ -817,3 +818,4 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     else:
         print(f"{get_datetime()} Registration rejected")
         return None, None, None
+

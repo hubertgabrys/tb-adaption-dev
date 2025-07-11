@@ -92,3 +92,16 @@ def load_environment(env_file_path: str = ".env"):
         base_dir = os.path.dirname(os.path.abspath(__file__))
     dotenv_path = os.path.join(base_dir, env_file_path)
     load_dotenv(dotenv_path)
+
+
+def configure_sitk_threads():
+    """Configure SimpleITK to use all CPU cores."""
+    try:
+        import multiprocessing
+        import SimpleITK as sitk
+        n_threads = multiprocessing.cpu_count()
+        sitk.ProcessObject.SetGlobalDefaultNumberOfThreads(n_threads)
+        print(f"Using {n_threads} SimpleITK threads")
+    except Exception as exc:
+        print(f"Could not configure SimpleITK threads: {exc}")
+
