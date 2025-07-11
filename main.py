@@ -12,7 +12,13 @@ from preprocessing import preprocess_input_directory, check_input_directory
 from register import perform_registration, get_base_plan
 from resampling import resample_ct
 from segmentation import create_empty_rtstruct
-from utils import get_datetime, find_series_uids, check_if_ct_present, load_environment
+from utils import (
+    get_datetime,
+    find_series_uids,
+    check_if_ct_present,
+    load_environment,
+    configure_sitk_threads,
+)
 
 warnings.filterwarnings("ignore", category=UserWarning, module="pydicom")
 
@@ -29,6 +35,7 @@ def main():
 
     # Load the .env
     load_environment(".env")
+    configure_sitk_threads()
 
     # Production
     patient_id = sys.argv[1]
