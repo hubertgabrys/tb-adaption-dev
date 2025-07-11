@@ -132,23 +132,32 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
     rtstruct_new.ROIContourSequence = pydicom.sequence.Sequence()
     rtstruct_new.RTROIObservationsSequence = pydicom.sequence.Sequence()
 
-    # Helper function: determine if an ROI name should be skipped.
-    def skip_roi(name):
-        name_lower = name.lower()
-        # Do not skip if this is the special ROI that always starts with "ptv" and ends with "+2cm_ph"
-        if name_lower.startswith("ptv") and name_lower.endswith("+2cm_ph"):
-            return False
-        # For all other cases, skip if it starts with "zzz_", or ends with "_ph", or is in the specified list
-        return name_lower.startswith("zzz_") or name_lower.endswith("_ph") or (name_lower in ["body", "couchsurface", "couchinterior"])
+    # Build a lookup for whether each ROI number contains any contour data.
+    roi_has_points = {}
+    for roi_contour in rtstruct_base.ROIContourSequence:
+        ref_num = getattr(roi_contour, "ReferencedROINumber", None)
+        has_points = False
+        if hasattr(roi_contour, "ContourSequence"):
+            for contour in roi_contour.ContourSequence:
+                if getattr(contour, "ContourData", None):
+                    has_points = True
+                    break
+        roi_has_points[ref_num] = has_points
 
-    # Helper function: determine if an ROI's Contour Sequence should be skipped (i.e., left empty).
-    def skip_contour(name):
+    # Helper function: centralised ROI skipping logic.
+    def skip_roi(name, has_points=True):
         name_lower = name.lower()
-        # If the ROI is the special case (starts with "ptv" and ends with "+2cm_ph"), do not skip it.
+        if not has_points:
+            return True
         if name_lower.startswith("ptv") and name_lower.endswith("+2cm_ph"):
             return False
-        # Otherwise, skip the contour if it starts with "ptv"
-        return name_lower.startswith("ptv")
+        if name_lower.startswith("ptv"):
+            return True
+        return (
+            name_lower.startswith("zzz_")
+            or name_lower.endswith("_ph")
+            or name_lower in ["body", "couchsurface", "couchinterior"]
+        )
 
     # --- Step 1: Filter Structure Set ROI Sequence ---
     # Process each ROI item based on its ROI Name (tag 3006,0026).
@@ -158,10 +167,10 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
     roi_lookup = {}
     for roi in rtstruct_base.StructureSetROISequence:
         roi_name = getattr(roi, "ROIName", "")
-        if skip_roi(roi_name):
-            continue
-        # Get the ROI Number (tag 3006,0022)
         roi_number = getattr(roi, "ROINumber", None)
+        has_points = roi_has_points.get(roi_number, True)
+        if skip_roi(roi_name, has_points):
+            continue
         if roi_number is not None:
             approved_roi_numbers.add(roi_number)
             roi_lookup[roi_number] = roi_name  # store the name
@@ -185,17 +194,18 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
 
         # Look up the ROI name that corresponds to this contour using the ROI number.
         roi_name = roi_lookup.get(ref_roi_num, "")
-        if skip_contour(roi_name):
-            # For ROIs starting with "PTV", remove the Contour Sequence.
-            new_roi_contour.ContourSequence = pydicom.sequence.Sequence()
-        else:
-            # Transform the coordinates for each contour within this ROI contour item.
-            if hasattr(new_roi_contour, "ContourSequence"):
-                for contour in new_roi_contour.ContourSequence:
-                    current_data = contour.ContourData
-                    new_data = transform_contour_points(rigid_transform, current_data)
-                    # Convert the transformed coordinates to strings as required by DICOM.
-                    contour.ContourData = [str(v) for v in new_data]
+        if hasattr(new_roi_contour, "ContourSequence"):
+            cleaned_sequence = pydicom.sequence.Sequence()
+            for contour in new_roi_contour.ContourSequence:
+                current_data = contour.ContourData
+                if not current_data:
+                    # Skip contours that contain no points
+                    continue
+                new_data = transform_contour_points(rigid_transform, current_data)
+                # Convert the transformed coordinates to strings as required by DICOM.
+                contour.ContourData = [str(v) for v in new_data]
+                cleaned_sequence.append(contour)
+            new_roi_contour.ContourSequence = cleaned_sequence
 
         rtstruct_new.ROIContourSequence.append(new_roi_contour)
         if progress_callback:
