@@ -127,10 +127,11 @@ def extract_metadata(dicom_file):
     return meta
 
 
-def _find_ptv_roi_number(rtstruct, prefix="PTV", suffix="+2cm_ph"):
+def _find_ptv_roi_number(rtstruct, prefix="ptv", suffix="+2cm_ph"):
     """Return ROI number for the PTV structure matching naming pattern."""
     for roi in getattr(rtstruct, "StructureSetROISequence", []):
-        name = getattr(roi, "ROIName", "")
+        name = getattr(roi, "ROIName", "").lower()
+        # print(name)
         if name.startswith(prefix) and name.endswith(suffix):
             return getattr(roi, "ROINumber", None)
     return None
@@ -156,8 +157,9 @@ def _roi_slice_range(rtstruct, roi_number, image):
                 z_indices.append(index[2])
     if not z_indices:
         return None
-    start = int(np.floor(min(z_indices)))
-    end = int(np.ceil(max(z_indices)))
+    start = int(np.floor(min(z_indices)))-20
+    end = int(np.ceil(max(z_indices)))+20
+    print(f"start={start}, end={end}")
     return start, end
 
 
@@ -251,19 +253,19 @@ def perform_rigid_registration(
     else:
         registration_method.SetMetricAsMattesMutualInformation(50)
     registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
-    registration_method.SetMetricSamplingPercentage(0.01, seed=42)
+    registration_method.SetMetricSamplingPercentage(0.005, seed=42)
     registration_method.SetInterpolator(sitk.sitkLinear)
     registration_method.SetOptimizerAsRegularStepGradientDescent(
         learningRate=1.0,
         minStep=1e-6,
-        numberOfIterations=200,
+        numberOfIterations=100,
         gradientMagnitudeTolerance=1e-6
     )
     registration_method.SetOptimizerScalesFromPhysicalShift()
     registration_method.SetInitialTransform(initial_transform, inPlace=False)
-    registration_method.SetShrinkFactorsPerLevel([4, 2, 1])
-    registration_method.SetSmoothingSigmasPerLevel([2, 1, 0])
-    registration_method.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
+    # registration_method.SetShrinkFactorsPerLevel([4, 2, 1])
+    # registration_method.SetSmoothingSigmasPerLevel([2, 1, 0])
+    # registration_method.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
 
     print(f"{get_datetime()} Performing registration...")
     final_transform = registration_method.Execute(fixed_processed, moving_processed)
