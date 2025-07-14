@@ -14,6 +14,7 @@ from matplotlib.widgets import Slider
 from utils import get_datetime, load_environment, configure_sitk_threads
 
 from dbconnector import DBHandler
+from copy_structures import read_base_rtstruct
 
 # --------------------------------------------------------------------
 # Helper functions
@@ -126,6 +127,72 @@ def extract_metadata(dicom_file):
     return meta
 
 
+def _find_ptv_roi_number(rtstruct, prefix="ptv", suffix="+2cm_ph"):
+    """Return ROI number for the PTV structure matching naming pattern."""
+    for roi in getattr(rtstruct, "StructureSetROISequence", []):
+        name = getattr(roi, "ROIName", "").lower()
+        # print(name)
+        if name.startswith(prefix) and name.endswith(suffix):
+            return getattr(roi, "ROINumber", None)
+    return None
+
+
+def _roi_slice_range(rtstruct, roi_number, image):
+    """Return first and last slice index covering the ROI."""
+    z_indices = []
+    for roi_contour in getattr(rtstruct, "ROIContourSequence", []):
+        if getattr(roi_contour, "ReferencedROINumber", None) != roi_number:
+            continue
+        if not hasattr(roi_contour, "ContourSequence"):
+            continue
+        for contour in roi_contour.ContourSequence:
+            data = contour.ContourData
+            for i in range(2, len(data), 3):
+                point = (
+                    float(data[i - 2]),
+                    float(data[i - 1]),
+                    float(data[i]),
+                )
+                index = image.TransformPhysicalPointToIndex(point)
+                z_indices.append(index[2])
+    if not z_indices:
+        return None
+    start = int(np.floor(min(z_indices)))-20
+    end = int(np.ceil(max(z_indices)))+20
+    print(f"start={start}, end={end}")
+    return start, end
+
+
+def crop_image_to_ptv(image, patient_id, rtplan_label, series_uid, padding=2):
+    """Crop *image* to slices around the PTV ROI if available."""
+    rtstruct = read_base_rtstruct(patient_id, rtplan_label, series_uid=series_uid)
+    if rtstruct is None:
+        print(f"{get_datetime()} No RTSTRUCT found for cropping")
+        return image
+
+    roi_number = _find_ptv_roi_number(rtstruct)
+    if roi_number is None:
+        print(f"{get_datetime()} No PTV +2cm_ph ROI found")
+        return image
+
+    rng = _roi_slice_range(rtstruct, roi_number, image)
+    if rng is None:
+        print(f"{get_datetime()} Could not determine ROI slice range")
+        return image
+
+    start, end = rng
+    start = max(start - padding, 0)
+    end = min(end + padding, image.GetSize()[2] - 1)
+    size = list(image.GetSize())
+    index = [0, 0, start]
+    size[2] = end - start + 1
+    extractor = sitk.ExtractImageFilter()
+    extractor.SetSize(size)
+    extractor.SetIndex(index)
+    cropped = extractor.Execute(image)
+    return cropped
+
+
 def estimate_initial_transform(fixed_image, moving_image,
                                fixed_modality="CT", moving_modality="CT"):
     """Estimate an initial rigid transform using SimpleITK."""
@@ -186,19 +253,19 @@ def perform_rigid_registration(
     else:
         registration_method.SetMetricAsMattesMutualInformation(50)
     registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
-    registration_method.SetMetricSamplingPercentage(0.01, seed=42)
+    registration_method.SetMetricSamplingPercentage(0.005, seed=42)
     registration_method.SetInterpolator(sitk.sitkLinear)
     registration_method.SetOptimizerAsRegularStepGradientDescent(
         learningRate=1.0,
         minStep=1e-6,
-        numberOfIterations=200,
+        numberOfIterations=100,
         gradientMagnitudeTolerance=1e-6
     )
     registration_method.SetOptimizerScalesFromPhysicalShift()
     registration_method.SetInitialTransform(initial_transform, inPlace=False)
-    registration_method.SetShrinkFactorsPerLevel([4, 2, 1])
-    registration_method.SetSmoothingSigmasPerLevel([2, 1, 0])
-    registration_method.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
+    # registration_method.SetShrinkFactorsPerLevel([4, 2, 1])
+    # registration_method.SetSmoothingSigmasPerLevel([2, 1, 0])
+    # registration_method.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
 
     print(f"{get_datetime()} Performing registration...")
     final_transform = registration_method.Execute(fixed_processed, moving_processed)
@@ -734,6 +801,17 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     # Cast & orient
     fixed_image = sitk.Cast(sitk.DICOMOrient(fixed_image, 'LPS'), sitk.sitkFloat32)
     moving_image = sitk.Cast(sitk.DICOMOrient(moving_image, 'LPS'), sitk.sitkFloat32)
+
+    # Crop the moving image around the PTV structure if available
+    try:
+        moving_image = crop_image_to_ptv(
+            moving_image,
+            patient_id,
+            rtplan_label,
+            used_moving_uid,
+        )
+    except Exception as exc:
+        print(f"{get_datetime()} Failed to crop moving image: {exc}")
 
     fixed_meta = extract_metadata(os.path.join(fixed_dir, os.path.basename(fixed_files[0])))
     moving_meta = extract_metadata(os.path.join(moving_dir, os.path.basename(moving_files[0])))
