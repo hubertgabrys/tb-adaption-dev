@@ -125,6 +125,22 @@ def extract_metadata(dicom_file):
     meta['StudyID'] = ds.get("StudyID", "Anonymous")
     return meta
 
+
+def estimate_initial_transform(fixed_image, moving_image,
+                               fixed_modality="CT", moving_modality="CT"):
+    """Estimate an initial rigid transform using SimpleITK."""
+    if fixed_modality == moving_modality:
+        method = sitk.CenteredTransformInitializerFilter.MOMENTS
+    else:
+        method = sitk.CenteredTransformInitializerFilter.GEOMETRY
+
+    return sitk.CenteredTransformInitializer(
+        fixed_image,
+        moving_image,
+        sitk.VersorRigid3DTransform(),
+        method,
+    )
+
 def perform_rigid_registration(
     fixed_image,
     moving_image,
@@ -149,15 +165,16 @@ def perform_rigid_registration(
         fixed_processed = fixed_image
         moving_processed = moving_image
 
-    # If no manual offsets were provided, estimate a better starting transform
-    # from the image geometry and intensity moments. This helps the optimizer
-    # converge when the images are far apart.
-    if np.allclose(initial_transform.GetTranslation(), (0.0, 0.0, 0.0)):
-        initial_transform = sitk.CenteredTransformInitializer(
+    # If no initial transform was provided, estimate one based on modality
+    if (
+        np.allclose(initial_transform.GetTranslation(), (0.0, 0.0, 0.0))
+        and np.allclose(initial_transform.GetMatrix(), tuple(np.eye(3).flatten()))
+    ):
+        initial_transform = estimate_initial_transform(
             fixed_processed,
             moving_processed,
-            sitk.VersorRigid3DTransform(),
-            sitk.CenteredTransformInitializerFilter.MOMENTS,
+            fixed_modality=fixed_modality,
+            moving_modality=moving_modality,
         )
 
     registration_method = sitk.ImageRegistrationMethod()
@@ -733,24 +750,31 @@ def perform_registration(current_directory, patient_id, rtplan_label,
 
     if prealign:
         # Pad the fixed image by 20 slices on both cranial and caudal ends
-        pad_lower = (0, 0, 20)   # (pad_x_before, pad_y_before, pad_z_before)
-        pad_upper = (0, 0, 20)   # (pad_x_after,  pad_y_after,  pad_z_after)
+        pad_lower = (0, 0, 20)
+        pad_upper = (0, 0, 20)
         padded_fixed = sitk.ConstantPad(
             fixed_image,
             pad_lower,
             pad_upper,
-            constant=min_val_fixed
+            constant=min_val_fixed,
         )
 
-        # Let user pick Z-, Y- and X-shifts manually (in slices)
+        pre_align_transform = estimate_initial_transform(
+            padded_fixed,
+            moving_image,
+            fixed_modality=fixed_modality,
+            moving_modality=moving_modality,
+        )
+
         moving_resized = sitk.Resample(
             moving_image,
             padded_fixed,
-            sitk.Transform(),
+            pre_align_transform,
             sitk.sitkLinear,
             min_val_moving,
-            moving_image.GetPixelIDValue()
+            moving_image.GetPixelIDValue(),
         )
+
         shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(
             padded_fixed,
             moving_resized,
@@ -763,19 +787,30 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         shift_z_mm = shift_z_slices * spacing[2] * (-1)
         shift_y_mm = shift_y_slices * spacing[1] * (-1)
         shift_x_mm = shift_x_slices * spacing[0] * (-1)
-        print(f"{get_datetime()} User‐defined Z-shift: {shift_z_slices} slices = {shift_z_mm:.2f} mm")
-        print(f"{get_datetime()} User‐defined Y-shift: {shift_y_slices} slices = {shift_y_mm:.2f} mm")
-        print(f"{get_datetime()} User‐defined X-shift: {shift_x_slices} slices = {shift_x_mm:.2f} mm")
+        print(
+            f"{get_datetime()} User‐defined Z-shift: {shift_z_slices} slices = {shift_z_mm:.2f} mm"
+        )
+        print(
+            f"{get_datetime()} User‐defined Y-shift: {shift_y_slices} slices = {shift_y_mm:.2f} mm"
+        )
+        print(
+            f"{get_datetime()} User‐defined X-shift: {shift_x_slices} slices = {shift_x_mm:.2f} mm"
+        )
     else:
-        # Automatic mode: start with no manual translation. A geometry-based
-        # initializer will be computed inside perform_rigid_registration.
+        pre_align_transform = estimate_initial_transform(
+            fixed_image,
+            moving_image,
+            fixed_modality=fixed_modality,
+            moving_modality=moving_modality,
+        )
         shift_x_mm = shift_y_mm = shift_z_mm = 0.0
 
-    # Build the initial transform from the manual offsets
-    initial_transform = sitk.VersorRigid3DTransform()
-    initial_transform.SetTranslation((shift_x_mm, shift_y_mm, shift_z_mm))
-    translation = initial_transform.GetTranslation()
-    print(f"Initial translation: {translation}")
+    # Combine the pre-alignment with any manual offsets
+    initial_transform = sitk.VersorRigid3DTransform(pre_align_transform)
+    current_translation = np.array(initial_transform.GetTranslation())
+    manual_translation = np.array([shift_x_mm, shift_y_mm, shift_z_mm])
+    initial_transform.SetTranslation(tuple(current_translation + manual_translation))
+    print(f"Initial translation: {initial_transform.GetTranslation()}")
     # moving_reg = sitk.Resample(moving_image, fixed_image, initial_transform,
     #                            sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
     # run_viewer(fixed_image, moving_reg)
