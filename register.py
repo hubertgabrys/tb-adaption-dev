@@ -731,6 +731,21 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     stats.Execute(moving_image)
     min_val_moving = stats.GetMinimum()
 
+    # ------------------------------------------------------------------
+    # Geometry-based pre-alignment in X (LR) and Y (AP)
+    # ------------------------------------------------------------------
+    geom_init = sitk.CenteredTransformInitializer(
+        fixed_image,
+        moving_image,
+        sitk.VersorRigid3DTransform(),
+        sitk.CenteredTransformInitializerFilter.GEOMETRY,
+    )
+    geom_tx, geom_ty, _ = geom_init.GetTranslation()
+    print(
+        f"{get_datetime()} Geometry prealignment: X={geom_tx:.2f} mm, "
+        f"Y={geom_ty:.2f} mm"
+    )
+
     if prealign:
         # Pad the fixed image by 20 slices on both cranial and caudal ends
         pad_lower = (0, 0, 20)   # (pad_x_before, pad_y_before, pad_z_before)
@@ -742,15 +757,18 @@ def perform_registration(current_directory, patient_id, rtplan_label,
             constant=min_val_fixed
         )
 
-        # Let user pick Z-, Y- and X-shifts manually (in slices)
+        # Show the moving image pre-aligned in X and Y
+        prealign_xy = sitk.VersorRigid3DTransform()
+        prealign_xy.SetTranslation((geom_tx, geom_ty, 0.0))
         moving_resized = sitk.Resample(
             moving_image,
             padded_fixed,
-            sitk.Transform(),
+            prealign_xy,
             sitk.sitkLinear,
             min_val_moving,
             moving_image.GetPixelIDValue()
         )
+        # Let user pick additional Z-, Y- and X-shifts manually (in slices)
         shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(
             padded_fixed,
             moving_resized,
@@ -766,10 +784,13 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         print(f"{get_datetime()} User‐defined Z-shift: {shift_z_slices} slices = {shift_z_mm:.2f} mm")
         print(f"{get_datetime()} User‐defined Y-shift: {shift_y_slices} slices = {shift_y_mm:.2f} mm")
         print(f"{get_datetime()} User‐defined X-shift: {shift_x_slices} slices = {shift_x_mm:.2f} mm")
+        shift_x_mm += geom_tx
+        shift_y_mm += geom_ty
     else:
-        # Automatic mode: start with no manual translation. A geometry-based
-        # initializer will be computed inside perform_rigid_registration.
-        shift_x_mm = shift_y_mm = shift_z_mm = 0.0
+        # Automatic mode: only geometry-based X/Y translation
+        shift_x_mm = geom_tx
+        shift_y_mm = geom_ty
+        shift_z_mm = 0.0
 
     # Build the initial transform from the manual offsets
     initial_transform = sitk.VersorRigid3DTransform()
