@@ -15,7 +15,12 @@ from register import get_base_plan, perform_registration
 from tkinter import messagebox
 from tkinter import ttk
 from resampling import resample_ct
-from utils import load_environment, check_if_ct_present, find_series_uids
+from utils import (
+    load_environment,
+    check_if_ct_present,
+    find_series_uids,
+    configure_sitk_threads,
+)
 from segmentation import create_empty_rtstruct
 from copy_structures import copy_structures, _rtstruct_references_series
 
@@ -95,6 +100,7 @@ def get_patient_name(directory_path: str) -> str:
 
 def main():
     load_environment(".env")
+    configure_sitk_threads()
     try:
         patient_id = sys.argv[1]
         rtplan_label = sys.argv[2]
@@ -520,3 +526,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
