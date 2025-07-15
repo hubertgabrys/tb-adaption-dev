@@ -11,7 +11,12 @@ from pydicom.sequence import Sequence
 from pydicom.uid import generate_uid, ExplicitVRLittleEndian
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
-from utils import get_datetime, load_environment, configure_sitk_threads
+from utils import (
+    get_datetime,
+    load_environment,
+    configure_sitk_threads,
+    float_to_ds_string,
+)
 
 from dbconnector import DBHandler
 from copy_structures import read_base_rtstruct
@@ -312,7 +317,7 @@ def create_registration_file(output_reg_file, final_transform, fixed_meta, movin
 
         # Flatten in row-major (C-order)
         mat_list = T.flatten(order='C').tolist()
-        return mat_list
+        return [float_to_ds_string(v) for v in mat_list]
 
     # Helper: create referenced image sequence
     def create_referenced_image_sequence(dicom_files):
@@ -361,10 +366,10 @@ def create_registration_file(output_reg_file, final_transform, fixed_meta, movin
         matrix_seq_fixed = Dataset()
         matrix_seq_fixed.FrameOfReferenceTransformationMatrixType = "RIGID"
         matrix_seq_fixed.FrameOfReferenceTransformationMatrix = [
-            1.0, 0.0, 0.0, 0.0,
-            0.0, 1.0, 0.0, 0.0,
-            0.0, 0.0, 1.0, 0.0,
-            0.0, 0.0, 0.0, 1.0
+            float_to_ds_string(1.0), float_to_ds_string(0.0), float_to_ds_string(0.0), float_to_ds_string(0.0),
+            float_to_ds_string(0.0), float_to_ds_string(1.0), float_to_ds_string(0.0), float_to_ds_string(0.0),
+            float_to_ds_string(0.0), float_to_ds_string(0.0), float_to_ds_string(1.0), float_to_ds_string(0.0),
+            float_to_ds_string(0.0), float_to_ds_string(0.0), float_to_ds_string(0.0), float_to_ds_string(1.0)
         ]
 
         reg_type_fixed = Dataset()

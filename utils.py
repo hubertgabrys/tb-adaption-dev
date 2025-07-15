@@ -2,10 +2,19 @@ import datetime
 import sys
 
 import pydicom
+from pydicom.valuerep import DS
 from dotenv import load_dotenv
 
 
 ALLOWED_SERIES = ['SyntheticCT HU', 'sCTp1-Dixon-HR_in', 't2_tse_tra']
+
+
+def float_to_ds_string(x: float, precision: int = 8) -> DS:
+    """Return *x* formatted for the DICOM DS VR."""
+    s = f"{x:.{precision}f}".rstrip('0').rstrip('.')
+    if len(s) > 16:
+        raise ValueError(f"Value '{s}' exceeds 16 characters for DICOM DS")
+    return DS(s)
 
 
 def get_datetime():

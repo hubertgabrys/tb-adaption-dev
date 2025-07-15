@@ -4,22 +4,9 @@ import re
 from pathlib import Path
 
 import pydicom
-from pydicom.valuerep import DS
 from tqdm import tqdm
 
-
-def float_to_ds_string(x: float, precision: int = 8) -> DS:
-    """
-    Convert a float to a DICOM DS (Decimal String) compliant value:
-      - Fixed‐point notation (no exponent)
-      - Up to `precision` decimal places
-      - Trim trailing zeros and decimal point
-      - Ensure max length 16 chars (raises if exceeded)
-    """
-    s = f"{x:.{precision}f}".rstrip('0').rstrip('.')
-    if len(s) > 16:
-        raise ValueError(f"Value '{s}' exceeds 16 characters for DICOM DS")
-    return DS(s)
+from utils import float_to_ds_string
 
 
 def transform_contour_points(transform, contour_data, precision: int = 8):
