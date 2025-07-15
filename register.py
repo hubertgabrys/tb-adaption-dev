@@ -129,6 +129,7 @@ def extract_metadata(dicom_file):
     meta['PatientSex'] = ds.get("PatientSex", "Anonymous")
     meta['PatientAge'] = ds.get("PatientAge", "Anonymous")
     meta['StudyID'] = ds.get("StudyID", "Anonymous")
+    meta['ReferringPhysicianName'] = ds.get("ReferringPhysicianName", "Anonymous")
     return meta
 
 
