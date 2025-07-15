@@ -438,6 +438,7 @@ def create_registration_file(output_reg_file, final_transform, fixed_meta, movin
     ds.SeriesTime = time_str
     ds.ContentTime = time_str
     ds.AccessionNumber = fixed_meta.get('AccessionNumber', "")
+    ds.ReferringPhysicianName = fixed_meta.get('ReferringPhysicianName', "")
     ds.Modality = "REG"
     ds.Manufacturer = ""
     ds.InstitutionName = "USZ"
