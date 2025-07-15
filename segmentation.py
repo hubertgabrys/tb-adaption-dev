@@ -43,7 +43,7 @@ def create_empty_rtstruct(dir_path, series_uid, filepaths):
     rtstruct.SeriesInstanceUID = rtstruct_uid  # new Series for the RTSTRUCT
     rtstruct.Modality = "RTSTRUCT"
     rtstruct.PatientBirthDate = getattr(first_dataset, "PatientBirthDate", "")
-    rtstruct.Sex = getattr(first_dataset, "PatientSex", "")
+    rtstruct.PatientSex = getattr(first_dataset, "PatientSex", "")
     rtstruct.AccessionNumber = getattr(first_dataset, "AccessionNumber", "")
     rtstruct.StudyID = getattr(first_dataset, "StudyID", "")
     rtstruct.ReferringPhysicianName = getattr(first_dataset, "ReferringPhysicianName", "")
