@@ -163,8 +163,14 @@ def _roi_slice_range(rtstruct, roi_number, image):
                 z_indices.append(index[2])
     if not z_indices:
         return None
-    start = int(np.floor(min(z_indices)))-20
-    end = int(np.ceil(max(z_indices)))+20
+    start = int(np.floor(min(z_indices))) - 20
+    end = int(np.ceil(max(z_indices))) + 20
+
+    # Clamp the range to the available slice indices
+    max_index = image.GetSize()[2] - 1
+    start = max(start, 0)
+    end = min(end, max_index)
+
     print(f"start={start}, end={end}")
     return start, end
 
