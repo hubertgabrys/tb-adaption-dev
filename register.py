@@ -173,7 +173,7 @@ def _get_isocenter_from_rtplan(rtplan):
     return None
 
 
-def crop_image_to_isocenter(image, patient_id, rtplan_label, padding=30):
+def crop_image_to_isocenter(image, patient_id, rtplan_label, padding=50):
     """Crop *image* to 30 slices above and below the RTPLAN isocenter."""
     rtplan = _read_base_rtplan(patient_id, rtplan_label)
     if rtplan is None:
