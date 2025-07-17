@@ -259,12 +259,12 @@ def perform_rigid_registration(
     else:
         registration_method.SetMetricAsMattesMutualInformation(50)
     registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
-    registration_method.SetMetricSamplingPercentage(0.005, seed=42)
+    registration_method.SetMetricSamplingPercentage(0.02, seed=42)
     registration_method.SetInterpolator(sitk.sitkLinear)
     registration_method.SetOptimizerAsRegularStepGradientDescent(
         learningRate=1.0,
         minStep=1e-6,
-        numberOfIterations=100,
+        numberOfIterations=200,
         gradientMagnitudeTolerance=1e-6
     )
     registration_method.SetOptimizerScalesFromPhysicalShift()
