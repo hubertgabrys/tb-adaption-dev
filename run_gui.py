@@ -358,6 +358,11 @@ def main():
         btn_semi.pack(padx=10, pady=(0, 10))
 
         dialog.transient(root)
+        # Center the dialog on the screen
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
         dialog.grab_set()
         root.wait_window(dialog)
         return result["mode"]
