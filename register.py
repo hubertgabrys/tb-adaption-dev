@@ -279,6 +279,179 @@ def perform_rigid_registration(
 
     return final_transform
 
+
+
+def perform_registration(current_directory, patient_id, rtplan_label,
+                         selected_series_uid=None, selected_modality=None,
+                         moving_series_uid=None, moving_modality=None,
+                         confirm_fn=None, prealign=True):
+    fixed_dir = current_directory
+    baseplan_dir = Path(os.environ.get('BASEPLAN_DIR'))
+    moving_dir = baseplan_dir / patient_id / rtplan_label
+    output_reg_file = current_directory + "\\REG.dcm"
+
+    print(f"{get_datetime()} Reading fixed image from:", fixed_dir)
+    if selected_series_uid:
+        fixed_modality = selected_modality or "CT"
+        fixed_image, fixed_files, used_fixed_uid = read_dicom_series(
+            fixed_dir,
+            modality=fixed_modality,
+            series_uid=selected_series_uid,
+        )
+    else:
+        try:
+            fixed_modality = "CT"
+            fixed_image, fixed_files, used_fixed_uid = read_dicom_series(fixed_dir, "CT")
+        except ValueError:
+            fixed_modality = "MR"
+            fixed_image, fixed_files, used_fixed_uid = read_dicom_series(fixed_dir, "MR")
+    print(f"{get_datetime()} Reading moving image from:", moving_dir)
+    if moving_series_uid:
+        moving_modality = moving_modality or "CT"
+        moving_image, moving_files, used_moving_uid = read_dicom_series(
+            moving_dir,
+            modality=moving_modality,
+            series_uid=moving_series_uid,
+        )
+    else:
+        moving_modality = moving_modality or "CT"
+        moving_image, moving_files, used_moving_uid = read_dicom_series(moving_dir, moving_modality)
+
+    # Cast & orient
+    fixed_image = sitk.Cast(sitk.DICOMOrient(fixed_image, 'LPS'), sitk.sitkFloat32)
+    moving_image = sitk.Cast(sitk.DICOMOrient(moving_image, 'LPS'), sitk.sitkFloat32)
+
+    # Crop the moving image around the PTV structure if available
+    try:
+        moving_image = crop_image_to_ptv(
+            moving_image,
+            patient_id,
+            rtplan_label,
+            used_moving_uid,
+        )
+    except Exception as exc:
+        print(f"{get_datetime()} Failed to crop moving image: {exc}")
+
+    fixed_meta = extract_metadata(os.path.join(fixed_dir, os.path.basename(fixed_files[0])))
+    moving_meta = extract_metadata(os.path.join(moving_dir, os.path.basename(moving_files[0])))
+
+    # Compute the min value of the fixed image
+    stats = sitk.StatisticsImageFilter()
+    stats.Execute(fixed_image)
+    min_val_fixed = stats.GetMinimum()
+
+    # Compute the min value of the moving image
+    stats = sitk.StatisticsImageFilter()
+    stats.Execute(moving_image)
+    min_val_moving = stats.GetMinimum()
+
+    if prealign:
+        # Pad the fixed image by 20 slices on both cranial and caudal ends
+        pad_lower = (0, 0, 20)
+        pad_upper = (0, 0, 20)
+        padded_fixed = sitk.ConstantPad(
+            fixed_image,
+            pad_lower,
+            pad_upper,
+            constant=min_val_fixed,
+        )
+
+        pre_align_transform = estimate_initial_transform(
+            padded_fixed,
+            moving_image,
+            fixed_modality=fixed_modality,
+            moving_modality=moving_modality,
+        )
+
+        moving_resized = sitk.Resample(
+            moving_image,
+            padded_fixed,
+            pre_align_transform,
+            sitk.sitkLinear,
+            min_val_moving,
+            moving_image.GetPixelIDValue(),
+        )
+
+        shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(
+            padded_fixed,
+            moving_resized,
+            fixed_modality=fixed_modality,
+            moving_modality=moving_modality,
+        )
+
+        # Convert slice shift → mm
+        spacing = fixed_image.GetSpacing()  # (x, y, z)
+        shift_z_mm = shift_z_slices * spacing[2] * (-1)
+        shift_y_mm = shift_y_slices * spacing[1] * (-1)
+        shift_x_mm = shift_x_slices * spacing[0] * (-1)
+        print(
+            f"{get_datetime()} User‐defined Z-shift: {shift_z_slices} slices = {shift_z_mm:.2f} mm"
+        )
+        print(
+            f"{get_datetime()} User‐defined Y-shift: {shift_y_slices} slices = {shift_y_mm:.2f} mm"
+        )
+        print(
+            f"{get_datetime()} User‐defined X-shift: {shift_x_slices} slices = {shift_x_mm:.2f} mm"
+        )
+    else:
+        pre_align_transform = estimate_initial_transform(
+            fixed_image,
+            moving_image,
+            fixed_modality=fixed_modality,
+            moving_modality=moving_modality,
+        )
+        shift_x_mm = shift_y_mm = shift_z_mm = 0.0
+
+    # Combine the pre-alignment with any manual offsets
+    initial_transform = sitk.VersorRigid3DTransform(pre_align_transform)
+    current_translation = np.array(initial_transform.GetTranslation())
+    manual_translation = np.array([shift_x_mm, shift_y_mm, shift_z_mm])
+    initial_transform.SetTranslation(tuple(current_translation + manual_translation))
+    print(f"Initial translation: {initial_transform.GetTranslation()}")
+    # moving_reg = sitk.Resample(moving_image, fixed_image, initial_transform,
+    #                            sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
+    # run_viewer(fixed_image, moving_reg)
+
+    # Rigid registration
+    rigid_transform = perform_rigid_registration(
+        fixed_image,
+        moving_image,
+        initial_transform,
+        fixed_modality=fixed_modality,
+        moving_modality=moving_modality,
+    )
+
+    # Resample for visual check
+    moving_reg = sitk.Resample(moving_image, fixed_image, rigid_transform,
+                               sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
+
+    # Show images after registration
+    translation = rigid_transform.GetNthTransform(0).GetTranslation()
+    print(f"Rigid translation: {translation}")
+    run_viewer(
+        fixed_image,
+        moving_reg,
+        fixed_modality=fixed_modality,
+        moving_modality=moving_modality,
+    )
+
+    if confirm_fn is None:
+        registration_accepted = input("Registration accepted? (y/n): ") == "y"
+    else:
+        registration_accepted = confirm_fn()
+
+    if registration_accepted:
+        print(f"{get_datetime()} Registration accepted")
+        # In this implementation the transform is inverted inside transformation_matrix()
+        # so we pass rigid_transform as is.
+        create_registration_file(output_reg_file, rigid_transform, fixed_meta, moving_meta,
+                                 fixed_files, moving_files)
+        return rigid_transform, used_fixed_uid, used_moving_uid
+    else:
+        print(f"{get_datetime()} Registration rejected")
+        return None, None, None
+
+
 # --------------------------------------------------------------------
 # Transform extraction & DICOM REG creation
 # --------------------------------------------------------------------
@@ -767,175 +940,3 @@ def run_viewer(fixed_image, moving_image,
         moving_modality=moving_modality,
     )
     return overlay.shift_z, overlay.shift_y, overlay.shift_x
-
-def perform_registration(current_directory, patient_id, rtplan_label,
-                         selected_series_uid=None, selected_modality=None,
-                         moving_series_uid=None, moving_modality=None,
-                         confirm_fn=None, prealign=True):
-    fixed_dir = current_directory
-    baseplan_dir = Path(os.environ.get('BASEPLAN_DIR'))
-    moving_dir = baseplan_dir / patient_id / rtplan_label
-    # moving_dir = f"\\\\raoariaapps\\raoariaapps$\\Utilities\\tb_adaption\\base_plans\\{patient_id}\\{rtplan_label}"
-    output_reg_file = current_directory + "\\REG.dcm"
-
-    print(f"{get_datetime()} Reading fixed image from:", fixed_dir)
-    if selected_series_uid:
-        fixed_modality = selected_modality or "CT"
-        fixed_image, fixed_files, used_fixed_uid = read_dicom_series(
-            fixed_dir,
-            modality=fixed_modality,
-            series_uid=selected_series_uid,
-        )
-    else:
-        try:
-            fixed_modality = "CT"
-            fixed_image, fixed_files, used_fixed_uid = read_dicom_series(fixed_dir, "CT")
-        except ValueError:
-            fixed_modality = "MR"
-            fixed_image, fixed_files, used_fixed_uid = read_dicom_series(fixed_dir, "MR")
-    print(f"{get_datetime()} Reading moving image from:", moving_dir)
-    if moving_series_uid:
-        moving_modality = moving_modality or "CT"
-        moving_image, moving_files, used_moving_uid = read_dicom_series(
-            moving_dir,
-            modality=moving_modality,
-            series_uid=moving_series_uid,
-        )
-    else:
-        moving_modality = moving_modality or "CT"
-        moving_image, moving_files, used_moving_uid = read_dicom_series(moving_dir, moving_modality)
-
-    # Cast & orient
-    fixed_image = sitk.Cast(sitk.DICOMOrient(fixed_image, 'LPS'), sitk.sitkFloat32)
-    moving_image = sitk.Cast(sitk.DICOMOrient(moving_image, 'LPS'), sitk.sitkFloat32)
-
-    # Crop the moving image around the PTV structure if available
-    try:
-        moving_image = crop_image_to_ptv(
-            moving_image,
-            patient_id,
-            rtplan_label,
-            used_moving_uid,
-        )
-    except Exception as exc:
-        print(f"{get_datetime()} Failed to crop moving image: {exc}")
-
-    fixed_meta = extract_metadata(os.path.join(fixed_dir, os.path.basename(fixed_files[0])))
-    moving_meta = extract_metadata(os.path.join(moving_dir, os.path.basename(moving_files[0])))
-
-    # Compute the min value of the fixed image
-    stats = sitk.StatisticsImageFilter()
-    stats.Execute(fixed_image)
-    min_val_fixed = stats.GetMinimum()
-
-    # Compute the min value of the moving image
-    stats = sitk.StatisticsImageFilter()
-    stats.Execute(moving_image)
-    min_val_moving = stats.GetMinimum()
-
-    if prealign:
-        # Pad the fixed image by 20 slices on both cranial and caudal ends
-        pad_lower = (0, 0, 20)
-        pad_upper = (0, 0, 20)
-        padded_fixed = sitk.ConstantPad(
-            fixed_image,
-            pad_lower,
-            pad_upper,
-            constant=min_val_fixed,
-        )
-
-        pre_align_transform = estimate_initial_transform(
-            padded_fixed,
-            moving_image,
-            fixed_modality=fixed_modality,
-            moving_modality=moving_modality,
-        )
-
-        moving_resized = sitk.Resample(
-            moving_image,
-            padded_fixed,
-            pre_align_transform,
-            sitk.sitkLinear,
-            min_val_moving,
-            moving_image.GetPixelIDValue(),
-        )
-
-        shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(
-            padded_fixed,
-            moving_resized,
-            fixed_modality=fixed_modality,
-            moving_modality=moving_modality,
-        )
-
-        # Convert slice shift → mm
-        spacing = fixed_image.GetSpacing()  # (x, y, z)
-        shift_z_mm = shift_z_slices * spacing[2] * (-1)
-        shift_y_mm = shift_y_slices * spacing[1] * (-1)
-        shift_x_mm = shift_x_slices * spacing[0] * (-1)
-        print(
-            f"{get_datetime()} User‐defined Z-shift: {shift_z_slices} slices = {shift_z_mm:.2f} mm"
-        )
-        print(
-            f"{get_datetime()} User‐defined Y-shift: {shift_y_slices} slices = {shift_y_mm:.2f} mm"
-        )
-        print(
-            f"{get_datetime()} User‐defined X-shift: {shift_x_slices} slices = {shift_x_mm:.2f} mm"
-        )
-    else:
-        pre_align_transform = estimate_initial_transform(
-            fixed_image,
-            moving_image,
-            fixed_modality=fixed_modality,
-            moving_modality=moving_modality,
-        )
-        shift_x_mm = shift_y_mm = shift_z_mm = 0.0
-
-    # Combine the pre-alignment with any manual offsets
-    initial_transform = sitk.VersorRigid3DTransform(pre_align_transform)
-    current_translation = np.array(initial_transform.GetTranslation())
-    manual_translation = np.array([shift_x_mm, shift_y_mm, shift_z_mm])
-    initial_transform.SetTranslation(tuple(current_translation + manual_translation))
-    print(f"Initial translation: {initial_transform.GetTranslation()}")
-    # moving_reg = sitk.Resample(moving_image, fixed_image, initial_transform,
-    #                            sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
-    # run_viewer(fixed_image, moving_reg)
-
-    # Rigid registration
-    rigid_transform = perform_rigid_registration(
-        fixed_image,
-        moving_image,
-        initial_transform,
-        fixed_modality=fixed_modality,
-        moving_modality=moving_modality,
-    )
-
-    # Resample for visual check
-    moving_reg = sitk.Resample(moving_image, fixed_image, rigid_transform,
-                               sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
-
-    # Show images after registration
-    translation = rigid_transform.GetNthTransform(0).GetTranslation()
-    print(f"Rigid translation: {translation}")
-    run_viewer(
-        fixed_image,
-        moving_reg,
-        fixed_modality=fixed_modality,
-        moving_modality=moving_modality,
-    )
-
-    if confirm_fn is None:
-        registration_accepted = input("Registration accepted? (y/n): ") == "y"
-    else:
-        registration_accepted = confirm_fn()
-
-    if registration_accepted:
-        print(f"{get_datetime()} Registration accepted")
-        # In this implementation the transform is inverted inside transformation_matrix()
-        # so we pass rigid_transform as is.
-        create_registration_file(output_reg_file, rigid_transform, fixed_meta, moving_meta,
-                                 fixed_files, moving_files)
-        return rigid_transform, used_fixed_uid, used_moving_uid
-    else:
-        print(f"{get_datetime()} Registration rejected")
-        return None, None, None
-
