@@ -658,8 +658,8 @@ def create_registration_file(output_reg_file, final_transform, fixed_meta, movin
 class MultiViewOverlay:
     def __init__(self, fixed_array, moving_array, spacing,
                  fixed_modality="CT", moving_modality="CT"):
-        self.fixed = fixed_array
-        self.moving = moving_array
+        self.fixed = fixed_array  # imaging of the day
+        self.moving = moving_array  # base plan imaging
         # spacing comes from SimpleITK in (x, y, z) order
         self.spacing = spacing
         self.alpha = 0.5
@@ -667,11 +667,13 @@ class MultiViewOverlay:
         self.fixed_modality = fixed_modality
         self.moving_modality = moving_modality
 
+        # compute intensity range
         self.fixed_vmin, self.fixed_vmax = self._compute_range(self.fixed,
                                                                 self.fixed_modality)
         self.moving_vmin, self.moving_vmax = self._compute_range(self.moving,
                                                                   self.moving_modality)
 
+        # set cmaps
         self.cmap_fixed = plt.get_cmap("gray")
         self.cmap_moving = plt.get_cmap("gray")
 
