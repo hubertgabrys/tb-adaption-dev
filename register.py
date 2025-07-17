@@ -133,68 +133,62 @@ def extract_metadata(dicom_file):
     return meta
 
 
-def _find_ptv_roi_number(rtstruct, prefix="ptv", suffix="+2cm_ph"):
-    """Return ROI number for the PTV structure matching naming pattern."""
-    for roi in getattr(rtstruct, "StructureSetROISequence", []):
-        name = getattr(roi, "ROIName", "").lower()
-        # print(name)
-        if name.startswith(prefix) and name.endswith(suffix):
-            return getattr(roi, "ROINumber", None)
+def _find_rtplan(directory):
+    """Return the first RTPLAN dataset found in *directory*."""
+    for file_name in os.listdir(directory):
+        plan_path = os.path.join(directory, file_name)
+        try:
+            ds = pydicom.dcmread(plan_path, stop_before_pixels=True)
+        except Exception:
+            continue
+        if getattr(ds, "Modality", "") == "RTPLAN":
+            return ds
     return None
 
 
-def _roi_slice_range(rtstruct, roi_number, image):
-    """Return first and last slice index covering the ROI."""
-    z_indices = []
-    for roi_contour in getattr(rtstruct, "ROIContourSequence", []):
-        if getattr(roi_contour, "ReferencedROINumber", None) != roi_number:
-            continue
-        if not hasattr(roi_contour, "ContourSequence"):
-            continue
-        for contour in roi_contour.ContourSequence:
-            data = contour.ContourData
-            for i in range(2, len(data), 3):
-                point = (
-                    float(data[i - 2]),
-                    float(data[i - 1]),
-                    float(data[i]),
-                )
-                index = image.TransformPhysicalPointToIndex(point)
-                z_indices.append(index[2])
-    if not z_indices:
+def _read_base_rtplan(patient_id, rtplan_label):
+    base_dir = Path(os.environ.get("BASEPLAN_DIR")) / patient_id / rtplan_label
+    return _find_rtplan(str(base_dir))
+
+
+def _get_isocenter_from_rtplan(rtplan):
+    """Return the first Isocenter Position [x, y, z] in mm from *rtplan*."""
+    if rtplan is None:
         return None
-    start = int(np.floor(min(z_indices))) - 20
-    end = int(np.ceil(max(z_indices))) + 20
+    sequences = []
+    if hasattr(rtplan, "IonBeamSequence"):
+        sequences = rtplan.IonBeamSequence
+    elif hasattr(rtplan, "BeamSequence"):
+        sequences = rtplan.BeamSequence
+    for beam in sequences:
+        # Look in ControlPointSequence first
+        if hasattr(beam, "ControlPointSequence"):
+            for cp in beam.ControlPointSequence:
+                iso = getattr(cp, "IsocenterPosition", None)
+                if iso is not None:
+                    return [float(v) for v in iso]
+        iso = getattr(beam, "IsocenterPosition", None)
+        if iso is not None:
+            return [float(v) for v in iso]
+    return None
 
-    # Clamp the range to the available slice indices
-    max_index = image.GetSize()[2] - 1
-    start = max(start, 0)
-    end = min(end, max_index)
 
-    print(f"start={start}, end={end}")
-    return start, end
-
-
-def crop_image_to_ptv(image, patient_id, rtplan_label, series_uid, padding=2):
-    """Crop *image* to slices around the PTV ROI if available."""
-    rtstruct = read_base_rtstruct(patient_id, rtplan_label, series_uid=series_uid)
-    if rtstruct is None:
-        print(f"{get_datetime()} No RTSTRUCT found for cropping")
+def crop_image_to_isocenter(image, patient_id, rtplan_label, padding=50):
+    """Crop *image* to 30 slices above and below the RTPLAN isocenter."""
+    rtplan = _read_base_rtplan(patient_id, rtplan_label)
+    if rtplan is None:
+        print(f"{get_datetime()} No RTPLAN found for cropping")
         return image
 
-    roi_number = _find_ptv_roi_number(rtstruct)
-    if roi_number is None:
-        print(f"{get_datetime()} No PTV +2cm_ph ROI found")
+    iso_pos = _get_isocenter_from_rtplan(rtplan)
+    if iso_pos is None:
+        print(f"{get_datetime()} No isocenter position found in RTPLAN")
         return image
 
-    rng = _roi_slice_range(rtstruct, roi_number, image)
-    if rng is None:
-        print(f"{get_datetime()} Could not determine ROI slice range")
-        return image
-
-    start, end = rng
-    start = max(start - padding, 0)
-    end = min(end + padding, image.GetSize()[2] - 1)
+    index = image.TransformPhysicalPointToIndex(tuple(iso_pos))
+    iso_slice = index[2]
+    start = max(iso_slice - padding, 0)
+    end = min(iso_slice + padding, image.GetSize()[2] - 1)
     size = list(image.GetSize())
     index = [0, 0, start]
     size[2] = end - start + 1
@@ -327,13 +321,12 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     fixed_image = sitk.Cast(sitk.DICOMOrient(fixed_image, 'LPS'), sitk.sitkFloat32)
     moving_image = sitk.Cast(sitk.DICOMOrient(moving_image, 'LPS'), sitk.sitkFloat32)
 
-    # Crop the moving image around the PTV structure if available
+    # Crop the moving image around the beam isocenter if available
     try:
-        moving_image = crop_image_to_ptv(
+        moving_image = crop_image_to_isocenter(
             moving_image,
             patient_id,
             rtplan_label,
-            used_moving_uid,
         )
     except Exception as exc:
         print(f"{get_datetime()} Failed to crop moving image: {exc}")
