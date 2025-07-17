@@ -199,6 +199,72 @@ def crop_image_to_ptv(image, patient_id, rtplan_label, series_uid, padding=2):
     return cropped
 
 
+def _transformed_corners(image, transform=None):
+    """Return physical coordinates of the 8 image corners after applying *transform*."""
+    if transform is None:
+        transform = sitk.Transform()
+    size = image.GetSize()
+    corners = [
+        (0, 0, 0),
+        (size[0] - 1, 0, 0),
+        (0, size[1] - 1, 0),
+        (0, 0, size[2] - 1),
+        (size[0] - 1, size[1] - 1, 0),
+        (size[0] - 1, 0, size[2] - 1),
+        (0, size[1] - 1, size[2] - 1),
+        (size[0] - 1, size[1] - 1, size[2] - 1),
+    ]
+    points = [image.TransformIndexToPhysicalPoint(c) for c in corners]
+    transformed = [transform.TransformPoint(p) for p in points]
+    return np.array(transformed)
+
+
+def resample_to_union(
+    fixed_image,
+    moving_image,
+    transform=None,
+    fixed_fill=0.0,
+    moving_fill=0.0,
+):
+    """Resample *fixed_image* and *moving_image* to a common space covering both."""
+    spacing = fixed_image.GetSpacing()
+    direction = fixed_image.GetDirection()
+
+    fixed_pts = _transformed_corners(fixed_image)
+    moving_pts = _transformed_corners(moving_image, transform)
+
+    all_pts = np.vstack([fixed_pts, moving_pts])
+    min_pt = all_pts.min(axis=0)
+    max_pt = all_pts.max(axis=0)
+
+    new_size = np.ceil((max_pt - min_pt) / np.array(spacing)).astype(int).tolist()
+
+    reference = sitk.Image(new_size, fixed_image.GetPixelIDValue())
+    reference.SetOrigin(tuple(min_pt))
+    reference.SetSpacing(spacing)
+    reference.SetDirection(direction)
+
+    resampled_fixed = sitk.Resample(
+        fixed_image,
+        reference,
+        sitk.Transform(),
+        sitk.sitkLinear,
+        fixed_fill,
+        fixed_image.GetPixelIDValue(),
+    )
+
+    resampled_moving = sitk.Resample(
+        moving_image,
+        reference,
+        transform if transform is not None else sitk.Transform(),
+        sitk.sitkLinear,
+        moving_fill,
+        moving_image.GetPixelIDValue(),
+    )
+
+    return resampled_fixed, resampled_moving
+
+
 def estimate_initial_transform(fixed_image, moving_image,
                                fixed_modality="CT", moving_modality="CT"):
     """Estimate an initial rigid transform using SimpleITK."""
@@ -363,24 +429,23 @@ def perform_registration(current_directory, patient_id, rtplan_label,
             moving_modality=moving_modality,
         )
 
-        moving_resized = sitk.Resample(
-            moving_image,
+        fixed_view, moving_view = resample_to_union(
             padded_fixed,
+            moving_image,
             pre_align_transform,
-            sitk.sitkLinear,
-            min_val_moving,
-            moving_image.GetPixelIDValue(),
+            fixed_fill=min_val_fixed,
+            moving_fill=min_val_moving,
         )
 
         shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(
-            padded_fixed,
-            moving_resized,
+            fixed_view,
+            moving_view,
             fixed_modality=fixed_modality,
             moving_modality=moving_modality,
         )
 
         # Convert slice shift → mm
-        spacing = fixed_image.GetSpacing()  # (x, y, z)
+        spacing = fixed_view.GetSpacing()  # (x, y, z)
         shift_z_mm = shift_z_slices * spacing[2] * (-1)
         shift_y_mm = shift_y_slices * spacing[1] * (-1)
         shift_x_mm = shift_x_slices * spacing[0] * (-1)
@@ -421,16 +486,20 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         moving_modality=moving_modality,
     )
 
-    # Resample for visual check
-    moving_reg = sitk.Resample(moving_image, fixed_image, rigid_transform,
-                               sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
+    # Resample for visual check in a common field of view
+    fixed_view, moving_view = resample_to_union(
+        fixed_image,
+        moving_image,
+        rigid_transform,
+        fixed_fill=min_val_fixed,
+        moving_fill=min_val_moving,
+    )
 
-    # Show images after registration
     translation = rigid_transform.GetNthTransform(0).GetTranslation()
     print(f"Rigid translation: {translation}")
     run_viewer(
-        fixed_image,
-        moving_reg,
+        fixed_view,
+        moving_view,
         fixed_modality=fixed_modality,
         moving_modality=moving_modality,
     )
