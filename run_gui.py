@@ -8,7 +8,6 @@ import pydicom
 
 from preprocessing import (
     list_dicom_series,
-    zip_directory,
     process_single_dicom_file,
 )
 from register import get_base_plan, perform_registration
@@ -202,7 +201,7 @@ def main():
             if base_dir.exists():
                 base_series_info.clear()
                 base_series_info.update(list_dicom_series(str(base_dir)))
-                update_bp_dropdown()
+                update_bp_selection()
             baseplan_status.config(text="\u2705", fg="green")
         except Exception:
             baseplan_status.config(text="\u274C", fg="red")
@@ -213,8 +212,8 @@ def main():
 
     # Store base plan series information
     base_series_info = {}
-    bp_selected_var = tk.StringVar()
-    bp_selection_map = {}
+    bp_default_uid = None
+    bp_default_modality = None
 
     # Get Imaging button with status label
     images_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -268,22 +267,6 @@ def main():
     btn_images.grid(row=5, column=0, sticky="w", padx=10, pady=(0, 5))
     images_status.grid(row=5, column=1, sticky="w")
 
-    # Backup button (create backup of input directory)
-    backup_status = tk.Label(root, text="", font=("Helvetica", 14))
-
-    def on_backup():
-        backup_status.config(text="\u23F3", fg="orange")  # hourglass
-        root.update_idletasks()
-        try:
-            zip_directory(str(input_dir), str(input_dir) + ".zip")
-            backup_status.config(text="\u2705", fg="green")
-        except Exception:
-            backup_status.config(text="\u274C", fg="red")
-
-    btn_backup = tk.Button(root, text="Create backup", command=on_backup)
-    btn_backup.grid(row=6, column=0, sticky="w", padx=10)
-    backup_status.grid(row=6, column=1, sticky="w")
-
     # Imaging series frame (initially empty)
     series_frame = tk.Frame(root)
     series_frame.grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=10)
@@ -335,12 +318,6 @@ def main():
     btn_resample = tk.Button(root, text="Resample sCT", command=on_resample)
     btn_resample.grid(row=11, column=0, sticky="w", padx=10, pady=(0, 10))
     resample_status.grid(row=11, column=1, sticky="w")
-
-
-    # Dropdown for base plan series
-    tk.Label(root, text="Select Base Plan Series for Registration").grid(row=13, column=0, columnspan=2, sticky="w", padx=10)
-    bp_dropdown = tk.OptionMenu(root, bp_selected_var, '')
-    bp_dropdown.grid(row=14, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
     # Dropdown menu for registration series
     selected_var = tk.StringVar()
@@ -400,10 +377,8 @@ def main():
             selected_info = series_info.get(selected_uid, {})
             selected_modality = selected_info.get("modality")
 
-            bp_label = bp_selected_var.get()
-            bp_uid = bp_selection_map.get(bp_label)
-            bp_info = base_series_info.get(bp_uid, {})
-            bp_modality = bp_info.get("modality")
+            bp_uid = bp_default_uid
+            bp_modality = bp_default_modality
 
             mode = ask_registration_mode()
             if not mode:
@@ -489,7 +464,6 @@ def main():
         for lbl in (
             baseplan_status,
             images_status,
-            backup_status,
             cleanup_status,
             resample_status,
             register_status,
@@ -521,24 +495,17 @@ def main():
         else:
             selected_var.set('')
 
-    def update_bp_dropdown(*args):
-        # populate base plan dropdown with CT and MR series only
-        menu = bp_dropdown["menu"]
-        menu.delete(0, 'end')
-        bp_selection_map.clear()
+    def update_bp_selection():
+        nonlocal bp_default_uid, bp_default_modality
         filtered_uids = [uid for uid, info in base_series_info.items() if info.get('modality') in ('CT', 'MR')]
-        for uid in filtered_uids:
-            info = base_series_info[uid]
-            text = f"{info['date']} {info['time']} – {info['modality']} - {info['description']}"
-            bp_selection_map[text] = uid
-            menu.add_command(label=text, command=tk._setit(bp_selected_var, text))
-
         if filtered_uids:
             first_uid = filtered_uids[0]
             first_info = base_series_info[first_uid]
-            bp_selected_var.set(f"{first_info['date']} {first_info['time']} – {first_info['modality']} - {first_info['description']}")
+            bp_default_uid = first_uid
+            bp_default_modality = first_info.get('modality')
         else:
-            bp_selected_var.set('')
+            bp_default_uid = None
+            bp_default_modality = None
 
     root.mainloop()
 
