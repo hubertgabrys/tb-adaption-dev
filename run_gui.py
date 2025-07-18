@@ -18,7 +18,6 @@ from resampling import resample_ct
 from utils import (
     load_environment,
     check_if_ct_present,
-    find_series_uids,
     configure_sitk_threads,
 )
 from segmentation import create_empty_rtstruct
@@ -69,18 +68,53 @@ def find_rtstructs_for_series(directory: str, series_uid: str) -> list[str]:
     return matches
 
 
-def confirm_overwrite(existing_paths: list[str], description: str) -> bool:
-    """Ask whether RTSTRUCTs referencing a series should be overwritten."""
-    if not existing_paths:
-        return True
-    count = len(existing_paths)
-    return messagebox.askyesno(
-        "Overwrite RTSTRUCT",
-        (
-            f"{count} RTSTRUCT file{'s' if count > 1 else ''} for series "
-            f"'{description}' exist. Overwrite?"
-        ),
-    )
+def remove_orphan_rt_files(directory: str, valid_series: set[str]) -> None:
+    """Delete RTSTRUCT or REG files referencing series not present in *valid_series*."""
+    for fname in os.listdir(directory):
+        fpath = os.path.join(directory, fname)
+        if not fname.lower().endswith(".dcm"):
+            continue
+        try:
+            ds = pydicom.dcmread(fpath, stop_before_pixels=True)
+        except Exception:
+            continue
+        modality = getattr(ds, "Modality", "")
+        if modality not in ("RTSTRUCT", "REG"):
+            continue
+
+        referenced = set()
+        if modality == "RTSTRUCT":
+            try:
+                for fr in ds.ReferencedFrameOfReferenceSequence:
+                    for st in fr.RTReferencedStudySequence:
+                        for se in st.RTReferencedSeriesSequence:
+                            uid = getattr(se, "SeriesInstanceUID", None)
+                            if uid:
+                                referenced.add(uid)
+            except Exception:
+                pass
+        else:  # REG
+            try:
+                if hasattr(ds, "ReferencedSeriesSequence"):
+                    for item in ds.ReferencedSeriesSequence:
+                        uid = getattr(item, "SeriesInstanceUID", None)
+                        if uid:
+                            referenced.add(uid)
+                if hasattr(ds, "StudiesContainingOtherReferencedInstancesSequence"):
+                    for study in ds.StudiesContainingOtherReferencedInstancesSequence:
+                        if hasattr(study, "ReferencedSeriesSequence"):
+                            for item in study.ReferencedSeriesSequence:
+                                uid = getattr(item, "SeriesInstanceUID", None)
+                                if uid:
+                                    referenced.add(uid)
+            except Exception:
+                pass
+
+        if referenced and not (referenced & valid_series):
+            try:
+                os.remove(fpath)
+            except Exception:
+                pass
 
 
 def get_patient_name(directory_path: str) -> str:
@@ -194,8 +228,17 @@ def main():
         root.update_idletasks()
         try:
             rename_all_dicom_files(str(input_dir))
-            # Load imaging series only when button is clicked
+
+            imaging_series = list_dicom_series(str(input_dir), imaging_only=True)
+            for uid, info in imaging_series.items():
+                existing = find_rtstructs_for_series(str(input_dir), uid)
+                if not existing:
+                    create_empty_rtstruct(str(input_dir), uid, info["files"])
+
+            remove_orphan_rt_files(str(input_dir), set(imaging_series.keys()))
+
             series_info = list_dicom_series(str(input_dir))
+
             # Clear previous entries
             for widget in series_frame.winfo_children():
                 widget.destroy()
@@ -293,35 +336,6 @@ def main():
     btn_resample.grid(row=11, column=0, sticky="w", padx=10, pady=(0, 10))
     resample_status.grid(row=11, column=1, sticky="w")
 
-    # Rename images and create RTSTRUCTs button
-    rename_status = tk.Label(root, text="", font=("Helvetica", 14))
-
-    def on_rename():
-        rename_status.config(text="\u23F3", fg="orange")  # hourglass
-        root.update_idletasks()
-        try:
-            dicom_series = list_dicom_series(str(input_dir), imaging_only=True)
-            for uid, info in dicom_series.items():
-                existing_paths = find_rtstructs_for_series(str(input_dir), uid)
-                new_path = os.path.join(str(input_dir), f"RS_{uid}.dcm")
-                if not confirm_overwrite(existing_paths, info["description"]):
-                    continue
-                for old in existing_paths:
-                    if os.path.abspath(old) == os.path.abspath(new_path):
-                        continue
-                    try:
-                        os.remove(old)
-                    except Exception:
-                        pass
-                create_empty_rtstruct(str(input_dir), uid, info["files"])
-            rename_status.config(text="\u2705", fg="green")
-        except Exception:
-            rename_status.config(text="\u274C", fg="red")
-        on_get_images()
-
-    btn_rename = tk.Button(root, text="Rename images", command=on_rename)
-    btn_rename.grid(row=12, column=0, sticky="w", padx=10, pady=(0, 10))
-    rename_status.grid(row=12, column=1, sticky="w")
 
     # Dropdown for base plan series
     tk.Label(root, text="Select Base Plan Series for Registration").grid(row=13, column=0, columnspan=2, sticky="w", padx=10)
@@ -478,7 +492,6 @@ def main():
             backup_status,
             cleanup_status,
             resample_status,
-            rename_status,
             register_status,
             copy_status,
         ):
