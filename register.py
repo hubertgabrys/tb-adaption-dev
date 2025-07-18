@@ -1057,42 +1057,59 @@ def explore_shift_grid(
         return float(reg.MetricEvaluate(fixed_image, moving_image))
 
     n = len(shifts)
-    xy = np.zeros((n, n))
-    yz = np.zeros((n, n))
+    metrics = np.zeros((n, n, n))
+    best_val = None
+    best_shift = (0, 0, 0)
 
     for i, sx in enumerate(shifts):
         for j, sy in enumerate(shifts):
-            xy[j, i] = metric_for(sx, sy, 0)
+            for k, sz in enumerate(shifts):
+                val = metric_for(sx, sy, sz)
+                metrics[k, j, i] = val
+                if best_val is None or val < best_val:
+                    best_val = val
+                    best_shift = (sx, sy, sz)
 
-    for j, sy in enumerate(shifts):
-        for k, sz in enumerate(shifts):
-            yz[k, j] = metric_for(0, sy, sz)
+    zero_idx = shifts.index(0) if 0 in shifts else 0
+    xy = metrics[zero_idx, :, :]
+    yz = metrics[:, :, zero_idx]
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    vmin = min(xy.min(), yz.min())
+    vmax = max(xy.max(), yz.max())
 
     im_xy = axes[0].imshow(
         xy,
         origin="lower",
         extent=[shifts[0], shifts[-1], shifts[0], shifts[-1]],
         aspect="auto",
+        vmin=vmin,
+        vmax=vmax,
     )
     axes[0].set_xlabel("X shift (slices)")
     axes[0].set_ylabel("Y shift (slices)")
     axes[0].set_title("Metric: X vs Y (Z=0)")
-    fig.colorbar(im_xy, ax=axes[0])
 
     im_yz = axes[1].imshow(
         yz,
         origin="lower",
         extent=[shifts[0], shifts[-1], shifts[0], shifts[-1]],
         aspect="auto",
+        vmin=vmin,
+        vmax=vmax,
     )
     axes[1].set_xlabel("Y shift (slices)")
     axes[1].set_ylabel("Z shift (slices)")
     axes[1].set_title("Metric: Y vs Z (X=0)")
-    fig.colorbar(im_yz, ax=axes[1])
+
+    fig.colorbar(im_xy, ax=axes.ravel().tolist())
 
     plt.tight_layout()
     plt.show()
+
+    print(
+        f"Best metric {best_val:.4f} at shift x={best_shift[0]}, y={best_shift[1]}, z={best_shift[2]}"
+    )
 
     return xy, yz
