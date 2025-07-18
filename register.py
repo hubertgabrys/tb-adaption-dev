@@ -650,7 +650,8 @@ def create_registration_file(output_reg_file, final_transform, fixed_meta, movin
 # --------------------------------------------------------------------
 class MultiViewOverlay:
     def __init__(self, fixed_array, moving_array, spacing,
-                 fixed_modality="CT", moving_modality="CT"):
+                 fixed_modality="CT", moving_modality="CT",
+                 fixed_image=None, moving_image=None):
         self.fixed = fixed_array  # imaging of the day
         self.moving = moving_array  # base plan imaging
         # spacing comes from SimpleITK in (x, y, z) order
@@ -672,6 +673,30 @@ class MultiViewOverlay:
 
         # fill value used when shifts move data outside the field of view
         self.fill_value = min(float(np.min(self.fixed)), float(np.min(self.moving)))
+
+        # SimpleITK images used to compute similarity metric
+        if fixed_image is None:
+            self.fixed_image = sitk.GetImageFromArray(self.fixed)
+            self.fixed_image.SetSpacing(self.spacing)
+        else:
+            self.fixed_image = fixed_image
+        if moving_image is None:
+            self.moving_image = sitk.GetImageFromArray(self.moving)
+            self.moving_image.SetSpacing(self.spacing)
+        else:
+            self.moving_image = moving_image
+
+        # registration method for metric evaluation
+        self.registration_method = sitk.ImageRegistrationMethod()
+        if self.fixed_modality == self.moving_modality:
+            self.registration_method.SetMetricAsCorrelation()
+        else:
+            self.registration_method.SetMetricAsMattesMutualInformation(numberOfHistogramBins=64)
+        self.registration_method.SetMetricSamplingStrategy(self.registration_method.RANDOM)
+        self.registration_method.SetMetricSamplingPercentage(0.02, seed=42)
+        self.registration_method.SetInterpolator(sitk.sitkLinear)
+        self.metric_transform = sitk.TranslationTransform(3)
+
 
         # initial slice indices
         self.slice_z = self.fixed.shape[0] // 2
@@ -787,6 +812,17 @@ class MultiViewOverlay:
         )
         self.slider_shift_z.on_changed(self.update_shift_z)
 
+        # metric display
+        self.metric_text = self.fig.text(
+            0.5,
+            0.95,
+            "",
+            ha="center",
+            va="bottom",
+            fontsize=12,
+        )
+        self.update_metric()
+
         self.fig.canvas.mpl_connect('scroll_event', self.on_scroll)
         plt.show()
 
@@ -812,6 +848,21 @@ class MultiViewOverlay:
         moving_rgb = self.apply_colormap(moving_slice, self.cmap_moving,
                                          self.moving_vmin, self.moving_vmax)
         return (1 - self.alpha) * fixed_rgb + self.alpha * moving_rgb
+
+    def compute_metric(self):
+        offset = (
+            -self.shift_x * self.spacing[0],
+            -self.shift_y * self.spacing[1],
+            -self.shift_z * self.spacing[2],
+        )
+        self.metric_transform.SetOffset(offset)
+        self.registration_method.SetInitialTransform(self.metric_transform, inPlace=False)
+        value = self.registration_method.MetricEvaluate(self.fixed_image, self.moving_image)
+        return float(value)
+
+    def update_metric(self):
+        value = self.compute_metric()
+        self.metric_text.set_text(f"Metric: {value:.4f}")
 
     def _shift_slice(self, array, shift_y=0, shift_x=0):
         """Shift a 2-D slice without wrapping around."""
@@ -913,6 +964,8 @@ class MultiViewOverlay:
         self.text_coronal   .set_text(f"Slice {self.slice_y + 1} / {self.fixed.shape[1]}")
         self.text_sagittal  .set_text(f"Slice {self.slice_x + 1} / {self.fixed.shape[2]}")
 
+        self.update_metric()
+
         self.fig.canvas.draw_idle()
 
     def on_scroll(self, event):
@@ -939,5 +992,7 @@ def run_viewer(fixed_image, moving_image,
         spacing,
         fixed_modality=fixed_modality,
         moving_modality=moving_modality,
+        fixed_image=fixed_image,
+        moving_image=moving_image,
     )
     return overlay.shift_z, overlay.shift_y, overlay.shift_x
