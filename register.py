@@ -214,6 +214,59 @@ def estimate_initial_transform(fixed_image, moving_image,
         method,
     )
 
+
+def perform_translation_prealign(fixed_image, moving_image, init_tx):
+    """Quick translation-only alignment using LBFGS-B."""
+    tx = sitk.TranslationTransform(fixed_image.GetDimension())
+    tx.SetOffset(init_tx.GetTranslation())
+
+    reg = sitk.ImageRegistrationMethod()
+    reg.SetMetricAsMattesMutualInformation(50)
+    reg.SetMetricSamplingStrategy(reg.REGULAR)
+    reg.SetMetricSamplingPercentage(0.1)
+    reg.SetInterpolator(sitk.sitkLinear)
+    reg.SetShrinkFactorsPerLevel([16, 8, 4, 2, 1])
+    reg.SetSmoothingSigmasPerLevel([4, 2, 1, 0.5, 0])
+    reg.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
+    reg.SetOptimizerAsLBFGSB(
+        gradientConvergenceTolerance=1e-5,
+        numberOfIterations=100,
+        maximumNumberOfCorrections=10,
+        maximumNumberOfFunctionEvaluations=500,
+    )
+    reg.SetOptimizerScalesFromPhysicalShift()
+    reg.SetInitialTransform(tx, inPlace=False)
+    final_tx = reg.Execute(fixed_image, moving_image)
+    print(f"{get_datetime()} Stage 1 translation: {final_tx.GetOffset()}")
+    return final_tx
+
+
+def perform_rigid_refine(fixed_image, moving_image, tx3d, center):
+    """Refine rotation and translation after pre-alignment."""
+    vr = sitk.VersorRigid3DTransform()
+    vr.SetCenter(center)
+    vr.SetTranslation(tx3d.GetOffset())
+
+    reg = sitk.ImageRegistrationMethod()
+    reg.SetMetricAsMattesMutualInformation(50)
+    reg.SetMetricSamplingStrategy(reg.REGULAR)
+    reg.SetMetricSamplingPercentage(0.05)
+    reg.SetInterpolator(sitk.sitkLinear)
+    reg.SetShrinkFactorsPerLevel([4, 2, 1])
+    reg.SetSmoothingSigmasPerLevel([2, 1, 0])
+    reg.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
+    reg.SetOptimizerAsRegularStepGradientDescent(
+        learningRate=1.0,
+        minStep=1e-6,
+        numberOfIterations=200,
+        gradientMagnitudeTolerance=1e-6,
+    )
+    reg.SetOptimizerScalesFromPhysicalShift()
+    reg.SetInitialTransform(vr, inPlace=False)
+    final_vr = reg.Execute(fixed_image, moving_image)
+    print(f"{get_datetime()} Stage 2 versor rigid completed")
+    return final_vr
+
 def perform_rigid_registration(
     fixed_image,
     moving_image,
@@ -411,21 +464,30 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     #                            sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
     # run_viewer(fixed_image, moving_reg)
 
-    # Rigid registration
-    rigid_transform = perform_rigid_registration(
+    # Two-stage registration: translation pre-align then rigid refine
+    tx3d = perform_translation_prealign(
         fixed_image,
         moving_image,
         initial_transform,
-        fixed_modality=fixed_modality,
-        moving_modality=moving_modality,
     )
+    center = initial_transform.GetCenter()
+    rigid3d = perform_rigid_refine(
+        fixed_image,
+        moving_image,
+        tx3d,
+        center,
+    )
+    rigid_transform = sitk.CompositeTransform(3)
+    rigid_transform.AddTransform(initial_transform)
+    rigid_transform.AddTransform(tx3d)
+    rigid_transform.AddTransform(rigid3d)
 
     # Resample for visual check
     moving_reg = sitk.Resample(moving_image, fixed_image, rigid_transform,
                                sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
 
     # Show images after registration
-    translation = rigid_transform.GetNthTransform(0).GetTranslation()
+    translation = get_final_rigid_transform(rigid_transform).GetTranslation()
     print(f"Rigid translation: {translation}")
     run_viewer(
         fixed_image,
