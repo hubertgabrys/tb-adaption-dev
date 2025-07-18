@@ -110,7 +110,7 @@ def remove_orphan_rt_files(directory: str, valid_series: set[str]) -> None:
             except Exception:
                 pass
 
-        if referenced and not referenced.issubset(valid_series):
+        if referenced and not (referenced & valid_series):
             try:
                 os.remove(fpath)
             except Exception:
