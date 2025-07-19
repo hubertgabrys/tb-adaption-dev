@@ -371,6 +371,14 @@ def perform_registration(current_directory, patient_id, rtplan_label,
             moving_image.GetPixelIDValue(),
         )
 
+        # Explore how shifts affect the registration metric
+        explore_shift_grid(
+            padded_fixed,
+            moving_resized,
+            fixed_modality=fixed_modality,
+            moving_modality=moving_modality,
+        )
+
         shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(
             padded_fixed,
             moving_resized,
@@ -996,3 +1004,112 @@ def run_viewer(fixed_image, moving_image,
         moving_image=moving_image,
     )
     return overlay.shift_z, overlay.shift_y, overlay.shift_x
+
+
+def explore_shift_grid(
+    fixed_image,
+    moving_image,
+    fixed_modality="CT",
+    moving_modality="CT",
+    shifts=None,
+):
+    """Evaluate the registration metric on a grid of slice shifts.
+
+    Parameters
+    ----------
+    fixed_image : sitk.Image
+        Fixed image after any padding/resampling.
+    moving_image : sitk.Image
+        Moving image in the same space as *fixed_image*.
+    fixed_modality : str, optional
+        Modality of the fixed image, by default "CT".
+    moving_modality : str, optional
+        Modality of the moving image, by default "CT".
+    shifts : list of int, optional
+        Shift values in number of slices. If None, defaults to
+        ``[-30, -15, 0, 15, 30]``.
+    """
+
+    if shifts is None:
+        shifts = [-30, -15, 0, 15, 30]
+
+    # Setup registration method for metric evaluation
+    reg = sitk.ImageRegistrationMethod()
+    if fixed_modality == moving_modality:
+        reg.SetMetricAsCorrelation()
+    else:
+        reg.SetMetricAsMattesMutualInformation(numberOfHistogramBins=64)
+    reg.SetMetricSamplingStrategy(reg.RANDOM)
+    reg.SetMetricSamplingPercentage(0.02, seed=42)
+    reg.SetInterpolator(sitk.sitkLinear)
+    transform = sitk.TranslationTransform(3)
+
+    spacing = fixed_image.GetSpacing()  # (x, y, z)
+
+    def metric_for(sx, sy, sz):
+        offset = (
+            -sx * spacing[0],
+            -sy * spacing[1],
+            -sz * spacing[2],
+        )
+        transform.SetOffset(offset)
+        reg.SetInitialTransform(transform, inPlace=False)
+        return float(reg.MetricEvaluate(fixed_image, moving_image))
+
+    n = len(shifts)
+    metrics = np.zeros((n, n, n))
+    best_val = None
+    best_shift = (0, 0, 0)
+
+    for i, sx in enumerate(shifts):
+        for j, sy in enumerate(shifts):
+            for k, sz in enumerate(shifts):
+                val = metric_for(sx, sy, sz)
+                metrics[k, j, i] = val
+                if best_val is None or val < best_val:
+                    best_val = val
+                    best_shift = (sx, sy, sz)
+
+    zero_idx = shifts.index(0) if 0 in shifts else 0
+    xy = metrics[zero_idx, :, :]
+    yz = metrics[:, :, zero_idx]
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    vmin = min(xy.min(), yz.min())
+    vmax = max(xy.max(), yz.max())
+
+    im_xy = axes[0].imshow(
+        xy,
+        origin="lower",
+        extent=[shifts[0], shifts[-1], shifts[0], shifts[-1]],
+        aspect="auto",
+        vmin=vmin,
+        vmax=vmax,
+    )
+    axes[0].set_xlabel("X shift (slices)")
+    axes[0].set_ylabel("Y shift (slices)")
+    axes[0].set_title("Metric: X vs Y (Z=0)")
+
+    im_yz = axes[1].imshow(
+        yz,
+        origin="lower",
+        extent=[shifts[0], shifts[-1], shifts[0], shifts[-1]],
+        aspect="auto",
+        vmin=vmin,
+        vmax=vmax,
+    )
+    axes[1].set_xlabel("Y shift (slices)")
+    axes[1].set_ylabel("Z shift (slices)")
+    axes[1].set_title("Metric: Y vs Z (X=0)")
+
+    fig.colorbar(im_xy, ax=axes.ravel().tolist())
+
+    plt.tight_layout()
+    plt.show()
+
+    print(
+        f"Best metric {best_val:.4f} at shift x={best_shift[0]}, y={best_shift[1]}, z={best_shift[2]}"
+    )
+
+    return xy, yz
