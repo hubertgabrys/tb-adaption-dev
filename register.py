@@ -199,20 +199,80 @@ def crop_image_to_isocenter(image, patient_id, rtplan_label, padding=50):
     return cropped
 
 
-def estimate_initial_transform(fixed_image, moving_image,
-                               fixed_modality="CT", moving_modality="CT"):
-    """Estimate an initial rigid transform using SimpleITK."""
-    if fixed_modality == moving_modality:
-        method = sitk.CenteredTransformInitializerFilter.MOMENTS
-    else:
-        method = sitk.CenteredTransformInitializerFilter.GEOMETRY
+def resample_to_isotropic(img: sitk.Image, modality,
+                          new_spacing=(1.5, 1.5, 1.5),
+                          interpolator=sitk.sitkLinear) -> sitk.Image:
+    """
+    Resample `img` to isotropic voxel spacing `new_spacing`.
+    """
+    # 1) original spacing & size
+    orig_spacing = img.GetSpacing()    # e.g. (sx, sy, sz)
+    orig_size    = img.GetSize()       # e.g. (nx, ny, nz)
 
-    return sitk.CenteredTransformInitializer(
-        fixed_image,
-        moving_image,
-        sitk.VersorRigid3DTransform(),
-        method,
-    )
+    # 2) compute new size
+    new_size = [
+        int(round(orig_size[i] * (orig_spacing[i] / new_spacing[i])))
+        for i in range(img.GetDimension())
+    ]
+
+    # 3) set up resampler
+    resampler = sitk.ResampleImageFilter()
+    resampler.SetOutputSpacing(new_spacing)
+    resampler.SetSize(new_size)
+    resampler.SetOutputDirection(img.GetDirection())
+    resampler.SetOutputOrigin(img.GetOrigin())
+    # identity transform = no additional transform
+    resampler.SetTransform(sitk.Transform(img.GetDimension(), sitk.sitkIdentity))
+    resampler.SetInterpolator(interpolator)
+    # choose a default background (e.g. 0) or pass one in:
+    if modality == 'CT':
+        resampler.SetDefaultPixelValue(-1024)
+    else:
+        resampler.SetDefaultPixelValue(0)
+
+    return resampler.Execute(img)
+
+
+def calc_mutual_information(fixed_image, moving_image):
+    # 1) Flatten both images
+    f = sitk.GetArrayFromImage(fixed_image).ravel()
+    m = sitk.GetArrayFromImage(moving_image).ravel()
+
+    # 2) Joint histogram
+    bins = 64
+    joint_hist, x_edges, y_edges = np.histogram2d(f, m, bins=bins)
+
+    # 3) Convert to joint probability
+    p_xy = joint_hist / np.sum(joint_hist)
+    p_x = np.sum(p_xy, axis=1)   # marginal for fixed
+    p_y = np.sum(p_xy, axis=0)   # marginal for moving
+
+    # 4) Compute MI = sum p(x,y) log [ p(x,y) / (p(x)p(y)) ]
+    #    Mask zero entries for stability
+    nonzero = p_xy > 0
+    mi = np.sum(p_xy[nonzero] * np.log(p_xy[nonzero] / (p_x[:,None] * p_y[None,:])[nonzero]))
+
+    # print(f"Mutual Information ≈ {mi:.4f} (nat units)")
+    return mi
+
+
+def estimate_initial_transform(fixed_image, moving_image):
+    """Estimate an initial rigid transform using SimpleITK."""
+    origin_f = np.array(fixed_image.GetOrigin())
+    origin_m = np.array(moving_image.GetOrigin())
+    spacing_f = np.array(fixed_image.GetSpacing())
+    spacing_m = np.array(moving_image.GetSpacing())
+    size_f    = np.array(fixed_image.GetSize())
+    size_m    = np.array(moving_image.GetSize())
+
+    center_f = origin_f + (size_f - 1) * spacing_f / 2.0
+    center_m = origin_m + (size_m - 1) * spacing_m / 2.0
+
+    offset = center_m - center_f
+
+    tx = sitk.TranslationTransform(3)
+    tx.SetOffset(tuple(offset))
+    return tx
 
 def perform_rigid_registration(
     fixed_image,
@@ -246,8 +306,6 @@ def perform_rigid_registration(
         initial_transform = estimate_initial_transform(
             fixed_processed,
             moving_processed,
-            fixed_modality=fixed_modality,
-            moving_modality=moving_modality,
         )
 
     registration_method = sitk.ImageRegistrationMethod()
@@ -334,14 +392,18 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     fixed_meta = extract_metadata(os.path.join(fixed_dir, os.path.basename(fixed_files[0])))
     moving_meta = extract_metadata(os.path.join(moving_dir, os.path.basename(moving_files[0])))
 
+    # Resample both images to 1.5x1.5x1.5 mm
+    iso_fixed = resample_to_isotropic(fixed_image, modality="MR", new_spacing=(1.5, 1.5, 1.5))
+    iso_moving = resample_to_isotropic(moving_image, modality="CT", new_spacing=(1.5, 1.5, 1.5))
+
     # Compute the min value of the fixed image
     stats = sitk.StatisticsImageFilter()
-    stats.Execute(fixed_image)
+    stats.Execute(iso_fixed)
     min_val_fixed = stats.GetMinimum()
 
     # Compute the min value of the moving image
     stats = sitk.StatisticsImageFilter()
-    stats.Execute(moving_image)
+    stats.Execute(iso_moving)
     min_val_moving = stats.GetMinimum()
 
     if prealign:
@@ -349,7 +411,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         pad_lower = (0, 0, 20)
         pad_upper = (0, 0, 20)
         padded_fixed = sitk.ConstantPad(
-            fixed_image,
+            iso_fixed,
             pad_lower,
             pad_upper,
             constant=min_val_fixed,
@@ -357,18 +419,16 @@ def perform_registration(current_directory, patient_id, rtplan_label,
 
         pre_align_transform = estimate_initial_transform(
             padded_fixed,
-            moving_image,
-            fixed_modality=fixed_modality,
-            moving_modality=moving_modality,
+            iso_moving,
         )
 
         moving_resized = sitk.Resample(
-            moving_image,
+            iso_moving,
             padded_fixed,
             pre_align_transform,
             sitk.sitkLinear,
             min_val_moving,
-            moving_image.GetPixelIDValue(),
+            iso_moving.GetPixelIDValue(),
         )
 
         shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(
@@ -379,7 +439,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         )
 
         # Convert slice shift → mm
-        spacing = fixed_image.GetSpacing()  # (x, y, z)
+        spacing = padded_fixed.GetSpacing()  # (x, y, z)
         shift_z_mm = shift_z_slices * spacing[2] * (-1)
         shift_y_mm = shift_y_slices * spacing[1] * (-1)
         shift_x_mm = shift_x_slices * spacing[0] * (-1)
@@ -394,12 +454,43 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         )
     else:
         pre_align_transform = estimate_initial_transform(
-            fixed_image,
-            moving_image,
-            fixed_modality=fixed_modality,
-            moving_modality=moving_modality,
+            iso_fixed,
+            iso_moving,
         )
-        shift_x_mm = shift_y_mm = shift_z_mm = 0.0
+        moving_resized = sitk.Resample(
+            iso_moving,
+            iso_fixed,
+            pre_align_transform,
+            sitk.sitkLinear,
+            min_val_moving,
+            iso_moving.GetPixelIDValue(),
+        )
+        baseline_mi = calc_mutual_information(iso_fixed, moving_resized)
+        print(f"Baseline mutual information: {baseline_mi:.4f}")
+        values = np.linspace(-50, 50, 21)
+        samples = np.random.choice(values, size=(100, 3), replace=True)
+        dx_best, dy_best, dz_best = 0, 0, 0
+        for dx, dy, dz in samples:
+            tx = sitk.TranslationTransform(3)
+            tx.SetOffset((dx, dy, 0.0))
+
+            shifted_moving = sitk.Resample(
+                moving_resized,  # input image
+                iso_fixed,  # reference image for size/origin/spacing
+                tx,  # the translation
+                sitk.sitkLinear,  # interpolation
+                0,  # background fill
+                moving_resized.GetPixelIDValue()
+            )
+            mi = calc_mutual_information(iso_fixed, shifted_moving)
+            if mi > baseline_mi:
+                baseline_mi = mi
+                dx_best, dy_best, dz_best = dx, dy, dz
+                print(f"Best mutual information for shift dx={dx_best}, dy={dy_best}, dz={dz_best}: {mi:.4f}")
+
+        shift_x_mm = dx_best * (-1)
+        shift_y_mm = dy_best * (-1)
+        shift_z_mm = dz_best * (-1)
 
     # Combine the pre-alignment with any manual offsets
     initial_transform = sitk.VersorRigid3DTransform(pre_align_transform)
