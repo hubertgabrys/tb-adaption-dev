@@ -135,12 +135,12 @@ def main():
     load_environment(".env")
     configure_sitk_threads()
     try:
-        patient_id = sys.argv[1]
-        rtplan_label = sys.argv[2]
-        rtplan_uid = sys.argv[3]
-        # patient_id = os.environ.get('PATIENT_ID')
-        # rtplan_label = os.environ.get('RTPLAN_LABEL')
-        # rtplan_uid = os.environ.get('RTPLAN_UID')
+        # patient_id = sys.argv[1]
+        # rtplan_label = sys.argv[2]
+        # rtplan_uid = sys.argv[3]
+        patient_id = os.environ.get('PATIENT_ID')
+        rtplan_label = os.environ.get('RTPLAN_LABEL')
+        rtplan_uid = os.environ.get('RTPLAN_UID')
     except IndexError:
         print("Usage: python run_gui.py <patient_id> <rtplan_label> <rtplan_uid>")
         sys.exit(1)

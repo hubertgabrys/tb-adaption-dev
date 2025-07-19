@@ -488,9 +488,9 @@ def perform_registration(current_directory, patient_id, rtplan_label,
                 dx_best, dy_best, dz_best = dx, dy, dz
                 print(f"Best mutual information for shift dx={dx_best}, dy={dy_best}, dz={dz_best}: {mi:.4f}")
 
-        shift_x_mm = dx_best * (-1)
-        shift_y_mm = dy_best * (-1)
-        shift_z_mm = dz_best * (-1)
+        shift_x_mm = dx_best
+        shift_y_mm = dy_best
+        shift_z_mm = dz_best
 
     # Combine the pre-alignment with any manual offsets
     initial_transform = sitk.VersorRigid3DTransform(pre_align_transform)
