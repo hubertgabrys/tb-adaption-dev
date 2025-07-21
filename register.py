@@ -7,6 +7,7 @@ import SimpleITK as sitk
 import matplotlib.pyplot as plt
 import numpy as np
 import pydicom
+import sys
 from joblib import Parallel, delayed
 from matplotlib.widgets import Slider
 from pydicom.dataset import Dataset, FileDataset
@@ -262,6 +263,26 @@ def crop_image_to_body(image, patient_id, rtplan_label, margin=10):
     return extractor.Execute(image)
 
 
+def crop_image_to_threshold(image, threshold=100, margin=10):
+    """Crop *image* to bounding box of voxels with intensity > *threshold*."""
+    binary = sitk.BinaryThreshold(
+        image, lowerThreshold=threshold, upperThreshold=sys.maxsize,
+        insideValue=1, outsideValue=0)
+    stats = sitk.LabelShapeStatisticsImageFilter()
+    stats.Execute(binary)
+    if not stats.GetLabels():
+        print(f"{get_datetime()} No voxels above threshold {threshold}")
+        return image
+    x, y, z, sx, sy, sz = stats.GetBoundingBox(1)
+    start = [max(0, int(v - margin)) for v in (x, y, z)]
+    end = [min(image.GetSize()[i] - 1, int(start[i] + [sx, sy, sz][i] - 1 + margin * 2)) for i in range(3)]
+    extract_size = [end[i] - start[i] + 1 for i in range(3)]
+    extractor = sitk.ExtractImageFilter()
+    extractor.SetIndex(start)
+    extractor.SetSize(extract_size)
+    return extractor.Execute(image)
+
+
 def resample_to_isotropic(img: sitk.Image, modality,
                           new_spacing=(1.5, 1.5, 1.5),
                           interpolator=sitk.sitkLinear) -> sitk.Image:
@@ -491,6 +512,15 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         )
     except Exception as exc:
         print(f"{get_datetime()} Failed to crop BODY contour: {exc}")
+
+    # Crop the fixed image using an intensity threshold
+    try:
+        fixed_image = crop_image_to_threshold(
+            fixed_image,
+            threshold=100,
+        )
+    except Exception as exc:
+        print(f"{get_datetime()} Failed to crop fixed image by intensity: {exc}")
 
     fixed_meta = extract_metadata(os.path.join(fixed_dir, os.path.basename(fixed_files[0])))
     moving_meta = extract_metadata(os.path.join(moving_dir, os.path.basename(moving_files[0])))
