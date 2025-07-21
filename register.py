@@ -20,6 +20,7 @@ from utils import (
     configure_sitk_threads,
     float_to_ds_string,
 )
+from copy_structures import read_base_rtstruct
 
 # --------------------------------------------------------------------
 # Helper functions
@@ -197,6 +198,68 @@ def crop_image_to_isocenter(image, patient_id, rtplan_label, padding=50):
     extractor.SetIndex(index)
     cropped = extractor.Execute(image)
     return cropped
+
+
+def crop_image_to_body(image, patient_id, rtplan_label, margin=10):
+    """Crop *image* to the bounding box of the BODY contour in the RTSTRUCT."""
+    rtstruct = read_base_rtstruct(patient_id, rtplan_label)
+    if rtstruct is None:
+        print(f"{get_datetime()} No RTSTRUCT found for body cropping")
+        return image
+
+    body_number = None
+    for roi in getattr(rtstruct, "StructureSetROISequence", []):
+        name = getattr(roi, "ROIName", "").strip().lower()
+        if name == "body":
+            body_number = getattr(roi, "ROINumber", None)
+            break
+
+    if body_number is None:
+        print(f"{get_datetime()} No BODY ROI found in RTSTRUCT")
+        return image
+
+    min_pt = [float("inf"), float("inf"), float("inf")]
+    max_pt = [-float("inf"), -float("inf"), -float("inf")]
+
+    for roi_cont in getattr(rtstruct, "ROIContourSequence", []):
+        if getattr(roi_cont, "ReferencedROINumber", None) != body_number:
+            continue
+        for contour in getattr(roi_cont, "ContourSequence", []):
+            pts = [float(v) for v in getattr(contour, "ContourData", [])]
+            for i in range(0, len(pts), 3):
+                x, y, z = pts[i], pts[i + 1], pts[i + 2]
+                if x < min_pt[0]:
+                    min_pt[0] = x
+                if y < min_pt[1]:
+                    min_pt[1] = y
+                if z < min_pt[2]:
+                    min_pt[2] = z
+                if x > max_pt[0]:
+                    max_pt[0] = x
+                if y > max_pt[1]:
+                    max_pt[1] = y
+                if z > max_pt[2]:
+                    max_pt[2] = z
+
+    if max_pt[0] == -float("inf"):
+        print(f"{get_datetime()} BODY contour has no points")
+        return image
+
+    min_pt = [min_pt[i] - margin for i in range(3)]
+    max_pt = [max_pt[i] + margin for i in range(3)]
+
+    start_idx = image.TransformPhysicalPointToIndex(min_pt)
+    end_idx = image.TransformPhysicalPointToIndex(max_pt)
+
+    size = image.GetSize()
+    start_idx = [max(0, int(start_idx[i])) for i in range(3)]
+    end_idx = [min(size[i] - 1, int(end_idx[i])) for i in range(3)]
+
+    extract_size = [end_idx[i] - start_idx[i] + 1 for i in range(3)]
+    extractor = sitk.ExtractImageFilter()
+    extractor.SetIndex(start_idx)
+    extractor.SetSize(extract_size)
+    return extractor.Execute(image)
 
 
 def resample_to_isotropic(img: sitk.Image, modality,
@@ -418,6 +481,16 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         )
     except Exception as exc:
         print(f"{get_datetime()} Failed to crop moving image: {exc}")
+
+    # Further crop the moving image based on the BODY contour if available
+    try:
+        moving_image = crop_image_to_body(
+            moving_image,
+            patient_id,
+            rtplan_label,
+        )
+    except Exception as exc:
+        print(f"{get_datetime()} Failed to crop BODY contour: {exc}")
 
     fixed_meta = extract_metadata(os.path.join(fixed_dir, os.path.basename(fixed_files[0])))
     moving_meta = extract_metadata(os.path.join(moving_dir, os.path.basename(moving_files[0])))
