@@ -4,22 +4,22 @@ import socket
 from pathlib import Path
 
 import SimpleITK as sitk
+import matplotlib.pyplot as plt
 import numpy as np
 import pydicom
+from joblib import Parallel, delayed
+from matplotlib.widgets import Slider
 from pydicom.dataset import Dataset, FileDataset
 from pydicom.sequence import Sequence
 from pydicom.uid import generate_uid, ExplicitVRLittleEndian
-import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
+
+from dbconnector import DBHandler
 from utils import (
     get_datetime,
     load_environment,
     configure_sitk_threads,
     float_to_ds_string,
 )
-
-from dbconnector import DBHandler
-from copy_structures import read_base_rtstruct
 
 # --------------------------------------------------------------------
 # Helper functions
@@ -352,6 +352,22 @@ def perform_rigid_registration(
     return final_transform
 
 
+def calc_mi_for_shift(idx, shifts, iso_fixed, iso_moving, min_val_moving):
+    dx, dy, dz = shifts
+    # build transform & resample
+    tx = sitk.TranslationTransform(3)
+    tx.SetOffset((dx, dy, dz))
+    shifted = sitk.Resample(
+        iso_moving,
+        iso_fixed,
+        tx,
+        sitk.sitkLinear,
+        min_val_moving,
+        iso_moving.GetPixelIDValue()
+    )
+    mi = calc_mutual_information(iso_fixed, shifted)
+    return idx, dx, dy, dz, mi
+
 
 def perform_registration(current_directory, patient_id, rtplan_label,
                          selected_series_uid=None, selected_modality=None,
@@ -439,7 +455,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     # iso_moving = sitk.Clamp(iso_moving, lowerBound=-160, upperBound=240)
 
     mi = calc_mutual_information(iso_fixed, iso_moving)
-    print(f"Mutual information after prealignment: {mi:.4f}")
+    print(f"{get_datetime()} Mutual information after prealignment: {mi:.4f}")
 
     # Allow the user to fine-tune the prealignment or run a random search for better prealignment
     if prealign:
@@ -476,39 +492,36 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         )
     else:
         baseline_mi = calc_mutual_information(iso_fixed, iso_moving)
-        print(f"Baseline mutual information: {baseline_mi:.4f}")
-        values = np.linspace(-30, 30, 61)
-        samples = np.random.choice(values, size=(100, 3), replace=True)
-        dx_best, dy_best, dz_best = 0, 0, 0
-        # for idx, shifts in enumerate(samples):
-        #     dx, dy, dz = shifts
-        #     tx = sitk.TranslationTransform(3)
-        #     tx.SetOffset((dx, dy, dz))
-        #
-        #     shifted_moving = sitk.Resample(
-        #         iso_moving,  # input image
-        #         iso_fixed,  # reference image for size/origin/spacing
-        #         tx,  # the translation
-        #         sitk.sitkLinear,  # interpolation
-        #         min_val_moving,  # background fill
-        #         iso_moving.GetPixelIDValue()
-        #     )
-        #     mi = calc_mutual_information(iso_fixed, shifted_moving)
-        #     if mi > baseline_mi:
-        #         baseline_mi = mi
-        #         dx_best, dy_best, dz_best = dx, dy, dz
-        #         print(f"{idx+1}. Best mutual information for shift dx={dx_best}, dy={dy_best}, dz={dz_best}: {mi:.4f}")
-        shift_x_mm = dx_best
-        shift_y_mm = dy_best
-        shift_z_mm = dz_best
+        print(f"{get_datetime()} Baseline mutual information: {baseline_mi:.4f}")
+        values = np.linspace(-40, 40, 81)
+        samples = np.random.choice(values, size=(1000, 3), replace=True)
+
+        # fire off in parallel on all cores (n_jobs=-1)
+        results = Parallel(n_jobs=-1)(
+            delayed(calc_mi_for_shift)(
+                idx, shifts, iso_fixed, iso_moving, min_val_moving
+            )
+            for idx, shifts in enumerate(samples)
+        )
+        # now scan the returned list for any improvements
+        dx_best = dy_best = dz_best = None
+        for idx, dx, dy, dz, mi in results:
+            if mi > baseline_mi:
+                baseline_mi = mi
+                dx_best, dy_best, dz_best = dx, dy, dz
+                print(f"{idx + 1}. Best MI at shift dx={dx_best:.1f}, dy={dy_best:.1f}, dz={dz_best:.1f}: {mi:.4f}")
+        # final best shifts
+        shift_x_mm = dx_best or 0
+        shift_y_mm = dy_best or 0
+        shift_z_mm = dz_best or 0
 
     # Fine-tuned prealignment
     tx = sitk.TranslationTransform(3)
     tx.SetOffset((shift_x_mm, shift_y_mm, shift_z_mm))
-    # iso_moving = sitk.Resample(iso_moving, iso_fixed, tx,
-    #                            sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
-    # mi = calc_mutual_information(iso_fixed, iso_moving)
-    # print(f"Mutual information after fine-tuning: {mi:.4f}")
+    iso_moving = sitk.Resample(iso_moving, iso_fixed, tx,
+                               sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
+    mi = calc_mutual_information(iso_fixed, iso_moving)
+    print(f"{get_datetime()} Mutual information after fine-tuning: {mi:.4f}")
     # run_viewer(iso_fixed, iso_moving, fixed_modality=fixed_modality, moving_modality=moving_modality
     #            )
 
@@ -529,7 +542,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     translation = rigid_transform.GetNthTransform(0).GetTranslation()
     print(f"Rigid translation: {translation}")
     mi = calc_mutual_information(iso_fixed, moving_reg)
-    print(f"Mutual information after rigid registration: {mi:.4f}")
+    print(f"{get_datetime()} Mutual information after rigid registration: {mi:.4f}")
     run_viewer(
         iso_fixed,
         moving_reg,
