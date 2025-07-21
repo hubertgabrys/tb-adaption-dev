@@ -401,7 +401,7 @@ def main():
                     moving_series_uid=bp_uid,
                     moving_modality=bp_modality,
                     confirm_fn=confirm,
-                    prealign=(mode == "semi"),
+                    manual_fine_tuning=(mode == "semi"),
                 )
             except Exception:
                 rigid_transform, used_fixed_uid, used_moving_uid = None, None, None
@@ -517,4 +517,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

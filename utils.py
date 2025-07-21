@@ -1,5 +1,7 @@
 import datetime
+import functools
 import sys
+import warnings
 
 import pydicom
 from pydicom.valuerep import DS
@@ -114,3 +116,15 @@ def configure_sitk_threads():
     except Exception as exc:
         print(f"Could not configure SimpleITK threads: {exc}")
 
+def deprecated(reason):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapped(*args, **kwargs):
+            warnings.warn(
+                f"{func.__name__}() is deprecated: {reason}",
+                category=DeprecationWarning,
+                stacklevel=2
+            )
+            return func(*args, **kwargs)
+        return wrapped
+    return decorator
