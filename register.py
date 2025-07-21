@@ -7,7 +7,7 @@ import SimpleITK as sitk
 import matplotlib.pyplot as plt
 import numpy as np
 import pydicom
-from joblib import Parallel, delayed
+import sys
 from matplotlib.widgets import Slider
 from pydicom.dataset import Dataset, FileDataset
 from pydicom.sequence import Sequence
@@ -20,6 +20,7 @@ from utils import (
     configure_sitk_threads,
     float_to_ds_string,
 )
+from copy_structures import read_base_rtstruct
 
 # --------------------------------------------------------------------
 # Helper functions
@@ -31,7 +32,6 @@ configure_sitk_threads()
 def get_base_plan(patient_id, rtplan_label, rtplan_uid):
     baseplan_dir = Path(os.environ.get('BASEPLAN_DIR'))
     moving_dir = baseplan_dir / patient_id / rtplan_label
-    # moving_dir = f"\\\\raoariaapps\\raoariaapps$\\Utilities\\tb_adaption\\base_plans\\{patient_id}\\{rtplan_label}"
     if os.path.isdir(moving_dir):
         print(f"{get_datetime()} Base plan exists")
 
@@ -199,13 +199,95 @@ def crop_image_to_isocenter(image, patient_id, rtplan_label, padding=50):
     return cropped
 
 
+def crop_image_to_body(image, patient_id, rtplan_label, margin=0):
+    """Crop *image* to the bounding box of the BODY contour in the RTSTRUCT."""
+    rtstruct = read_base_rtstruct(patient_id, rtplan_label)
+    if rtstruct is None:
+        print(f"{get_datetime()} No RTSTRUCT found for body cropping")
+        return image
+
+    body_number = None
+    for roi in getattr(rtstruct, "StructureSetROISequence", []):
+        name = getattr(roi, "ROIName", "").strip().lower()
+        if name == "body":
+            body_number = getattr(roi, "ROINumber", None)
+            break
+
+    if body_number is None:
+        print(f"{get_datetime()} No BODY ROI found in RTSTRUCT")
+        return image
+
+    min_pt = [float("inf"), float("inf"), float("inf")]
+    max_pt = [-float("inf"), -float("inf"), -float("inf")]
+
+    for roi_cont in getattr(rtstruct, "ROIContourSequence", []):
+        if getattr(roi_cont, "ReferencedROINumber", None) != body_number:
+            continue
+        for contour in getattr(roi_cont, "ContourSequence", []):
+            pts = [float(v) for v in getattr(contour, "ContourData", [])]
+            for i in range(0, len(pts), 3):
+                x, y, z = pts[i], pts[i + 1], pts[i + 2]
+                if x < min_pt[0]:
+                    min_pt[0] = x
+                if y < min_pt[1]:
+                    min_pt[1] = y
+                if z < min_pt[2]:
+                    min_pt[2] = z
+                if x > max_pt[0]:
+                    max_pt[0] = x
+                if y > max_pt[1]:
+                    max_pt[1] = y
+                if z > max_pt[2]:
+                    max_pt[2] = z
+
+    if max_pt[0] == -float("inf"):
+        print(f"{get_datetime()} BODY contour has no points")
+        return image
+
+    min_pt = [min_pt[i] - margin for i in range(3)]
+    max_pt = [max_pt[i] + margin for i in range(3)]
+
+    start_idx = image.TransformPhysicalPointToIndex(min_pt)
+    end_idx = image.TransformPhysicalPointToIndex(max_pt)
+
+    size = image.GetSize()
+    start_idx = [max(0, int(start_idx[i])) for i in range(3)]
+    end_idx = [min(size[i] - 1, int(end_idx[i])) for i in range(3)]
+
+    extract_size = [end_idx[i] - start_idx[i] + 1 for i in range(3)]
+    extractor = sitk.ExtractImageFilter()
+    extractor.SetIndex(start_idx)
+    extractor.SetSize(extract_size)
+    return extractor.Execute(image)
+
+
+def crop_image_to_threshold(image, threshold=100, margin=0):
+    """Crop *image* to bounding box of voxels with intensity > *threshold*."""
+    binary = sitk.BinaryThreshold(
+        image, lowerThreshold=threshold, upperThreshold=sys.maxsize,
+        insideValue=1, outsideValue=0)
+    stats = sitk.LabelShapeStatisticsImageFilter()
+    stats.Execute(binary)
+    if not stats.GetLabels():
+        print(f"{get_datetime()} No voxels above threshold {threshold}")
+        return image
+    x, y, z, sx, sy, sz = stats.GetBoundingBox(1)
+    start = [max(0, int(v - margin)) for v in (x, y, z)]
+    end = [min(image.GetSize()[i] - 1, int(start[i] + [sx, sy, sz][i] - 1 + margin * 2)) for i in range(3)]
+    extract_size = [end[i] - start[i] + 1 for i in range(3)]
+    extractor = sitk.ExtractImageFilter()
+    extractor.SetIndex(start)
+    extractor.SetSize(extract_size)
+    return extractor.Execute(image)
+
+
 def resample_to_isotropic(img: sitk.Image, modality,
                           new_spacing=(1.5, 1.5, 1.5),
                           interpolator=sitk.sitkLinear) -> sitk.Image:
     """
     Resample `img` to isotropic voxel spacing `new_spacing`.
     """
-    # 1) original spacing & size
+    # 1) original spacing and size
     orig_spacing = img.GetSpacing()    # e.g. (sx, sy, sz)
     orig_size    = img.GetSize()       # e.g. (nx, ny, nz)
 
@@ -277,7 +359,7 @@ def calc_mutual_information(fixed_image,
     return mi
 
 
-def estimate_initial_transform(fixed_image, moving_image):
+def estimate_initial_transform_manual(fixed_image, moving_image):
     """Estimate an initial rigid transform using SimpleITK."""
     origin_f = np.array(fixed_image.GetOrigin())
     origin_m = np.array(moving_image.GetOrigin())
@@ -296,53 +378,96 @@ def estimate_initial_transform(fixed_image, moving_image):
     print(f"{get_datetime()} Initial transform: {offset}")
     return tx
 
+def perform_initial_registration(fixed_image, moving_image):
+    initial_tx = sitk.CenteredTransformInitializer(
+        fixed_image, moving_image,
+        sitk.VersorRigid3DTransform(),
+        sitk.CenteredTransformInitializerFilter.GEOMETRY
+    )
+    print(f"{get_datetime()} Initial transform: {initial_tx.GetTranslation()}")
+    return initial_tx
+
+def tune_initial_registration(fixed_image, moving_image, transform, mode='auto'):
+    if mode == 'auto':
+        print(f"{get_datetime()} Translation-only exhaustive start")
+        translationTx = sitk.TranslationTransform(3)
+        translationTx.SetOffset(transform.GetTranslation())
+        registration_method = sitk.ImageRegistrationMethod()
+        registration_method.SetMetricAsMattesMutualInformation(50)
+        registration_method.SetOptimizerAsExhaustive(numberOfSteps=[3, 3, 3], stepLength=15)
+        registration_method.SetInitialTransform(translationTx)
+        registration_method.SetInterpolator(sitk.sitkLinear)
+        auto_translation = registration_method.Execute(fixed_image, moving_image)
+        transform.SetTranslation(auto_translation.GetOffset())
+        print(f"{get_datetime()} Translation-only exhaustive done")
+        print(f"{get_datetime()} Optimal offset: {transform.GetTranslation()}")
+        return transform
+    elif mode == 'manual':
+        shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(fixed_image, moving_image, transform, fixed_modality="MR", moving_modality="CT")
+
+        # Convert slice shift → mm
+        spacing = fixed_image.GetSpacing()
+        shift_z_mm = shift_z_slices * spacing[2] * (-1)
+        shift_y_mm = shift_y_slices * spacing[1] * (-1)
+        shift_x_mm = shift_x_slices * spacing[0] * (-1)
+        print(
+            f"{get_datetime()} User‐defined Z-shift: {shift_z_slices} slices = {shift_z_mm:.2f} mm"
+        )
+        print(
+            f"{get_datetime()} User‐defined Y-shift: {shift_y_slices} slices = {shift_y_mm:.2f} mm"
+        )
+        print(
+            f"{get_datetime()} User‐defined X-shift: {shift_x_slices} slices = {shift_x_mm:.2f} mm"
+        )
+        new_translation = np.array(transform.GetTranslation()) + np.array((shift_x_mm, shift_y_mm, shift_z_mm))
+        transform.SetTranslation(new_translation)
+        return transform
+    else:
+        return None
+
+
 def perform_rigid_registration(
     fixed_image,
     moving_image,
     initial_transform,
-    fixed_modality="MR",
-    moving_modality="CT",
 ):
-    """Perform rigid registration of two images.
-
-    The metric is chosen automatically based on modality:
-    cross-correlation for same-modality pairs and mutual information for
-    cross-modality pairs.
-    """
-    print(f"{get_datetime()} Initializing registration...")
+    """Perform rigid registration of two images."""
+    print(f"{get_datetime()} Initializing rigid registration...")
 
     # make a mask of “good” voxels in the fixed and moving images
     fixed_mask = sitk.BinaryThreshold(fixed_image,
-                                      lowerThreshold=10,
-                                      upperThreshold=1000,
+                                      lowerThreshold=100,
+                                      upperThreshold=1100,
                                       insideValue=1,
                                       outsideValue=0)
 
     moving_mask = sitk.BinaryThreshold(moving_image,
                                        lowerThreshold=-140,
-                                       upperThreshold=100,
+                                       upperThreshold=360,
                                        insideValue=1,
                                        outsideValue=0)
 
+    # set up the registration method
     registration_method = sitk.ImageRegistrationMethod()
     registration_method.SetMetricAsMattesMutualInformation(50)
-    registration_method.SetMetricFixedMask(fixed_mask)
-    registration_method.SetMetricMovingMask(moving_mask)
+    # registration_method.SetMetricFixedMask(fixed_mask)
+    # registration_method.SetMetricMovingMask(moving_mask)
     registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
-    registration_method.SetMetricSamplingPercentage(0.02, seed=42)
+    registration_method.SetMetricSamplingPercentage(0.1, seed=42)
     registration_method.SetInterpolator(sitk.sitkLinear)
+
+    # choose optimizer and scales
     registration_method.SetOptimizerAsRegularStepGradientDescent(
         learningRate=1.0,
         minStep=1e-6,
-        numberOfIterations=200,
+        numberOfIterations=100,
         gradientMagnitudeTolerance=1e-6
     )
     registration_method.SetOptimizerScalesFromPhysicalShift()
-    initial_transform = sitk.CenteredTransformInitializer(
-        fixed_image, moving_image,
-        sitk.VersorRigid3DTransform(),
-        sitk.CenteredTransformInitializerFilter.GEOMETRY
-    )
+
+
+    # initial_transform = sitk.VersorRigid3DTransform()
+    # initial_transform.SetTranslation(initial_transform.GetOffset())
     registration_method.SetInitialTransform(initial_transform, inPlace=False)
 
     print(f"{get_datetime()} Performing registration...")
@@ -352,27 +477,10 @@ def perform_rigid_registration(
     return final_transform
 
 
-def calc_mi_for_shift(idx, shifts, iso_fixed, iso_moving, min_val_moving):
-    dx, dy, dz = shifts
-    # build transform & resample
-    tx = sitk.TranslationTransform(3)
-    tx.SetOffset((dx, dy, dz))
-    shifted = sitk.Resample(
-        iso_moving,
-        iso_fixed,
-        tx,
-        sitk.sitkLinear,
-        min_val_moving,
-        iso_moving.GetPixelIDValue()
-    )
-    mi = calc_mutual_information(iso_fixed, shifted)
-    return idx, dx, dy, dz, mi
-
-
 def perform_registration(current_directory, patient_id, rtplan_label,
                          selected_series_uid=None, selected_modality=None,
                          moving_series_uid=None, moving_modality=None,
-                         confirm_fn=None, prealign=True):
+                         confirm_fn=None, manual_fine_tuning=True):
     fixed_dir = current_directory
     baseplan_dir = Path(os.environ.get('BASEPLAN_DIR'))
     moving_dir = baseplan_dir / patient_id / rtplan_label
@@ -419,6 +527,25 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     except Exception as exc:
         print(f"{get_datetime()} Failed to crop moving image: {exc}")
 
+    # Further crop the moving image based on the BODY contour if available
+    try:
+        moving_image = crop_image_to_body(
+            moving_image,
+            patient_id,
+            rtplan_label,
+        )
+    except Exception as exc:
+        print(f"{get_datetime()} Failed to crop BODY contour: {exc}")
+
+    # # Crop the fixed image using an intensity threshold
+    # try:
+    #     fixed_image = crop_image_to_threshold(
+    #         fixed_image,
+    #         threshold=100,
+    #     )
+    # except Exception as exc:
+    #     print(f"{get_datetime()} Failed to crop fixed image by intensity: {exc}")
+
     fixed_meta = extract_metadata(os.path.join(fixed_dir, os.path.basename(fixed_files[0])))
     moving_meta = extract_metadata(os.path.join(moving_dir, os.path.basename(moving_files[0])))
 
@@ -430,122 +557,69 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     stats = sitk.StatisticsImageFilter()
     stats.Execute(iso_fixed)
     min_val_fixed = stats.GetMinimum()
+    min_val_fixed = 0
 
     # Compute the min value of the moving image
     stats = sitk.StatisticsImageFilter()
     stats.Execute(iso_moving)
     min_val_moving = stats.GetMinimum()
-    min_val_moving = 0
+    min_val_moving = -1024
 
     # Prealign
-    pre_align_transform = estimate_initial_transform(
+    prealign_transform = perform_initial_registration(
         iso_fixed,
         iso_moving,
     )
-    iso_moving = sitk.Resample(
-        iso_moving,
-        iso_fixed,
-        pre_align_transform,
-        sitk.sitkLinear,
-        min_val_moving,
-        iso_moving.GetPixelIDValue(),
-    )
+    # iso_moving = sitk.Resample(
+    #     iso_moving,
+    #     iso_fixed,
+    #     prealign_transform,
+    #     sitk.sitkLinear,
+    #     min_val_moving,
+    #     iso_moving.GetPixelIDValue(),
+    # )
 
     # Clamp intensities
     # iso_moving = sitk.Clamp(iso_moving, lowerBound=-160, upperBound=240)
 
     mi = calc_mutual_information(iso_fixed, iso_moving)
-    print(f"{get_datetime()} Mutual information after prealignment: {mi:.4f}")
+    print(f"{get_datetime()} Baseline mutual information: {mi:.4f}")
 
-    # Allow the user to fine-tune the prealignment or run a random search for better prealignment
-    if prealign:
-        # # Pad the fixed image by 20 slices on both cranial and caudal ends
-        # pad_lower = (0, 0, 20)
-        # pad_upper = (0, 0, 20)
-        # padded_fixed = sitk.ConstantPad(
-        #     iso_fixed,
-        #     pad_lower,
-        #     pad_upper,
-        #     constant=min_val_fixed,
-        # )
-
-        shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(
-            iso_fixed,
-            iso_moving,
-            fixed_modality=fixed_modality,
-            moving_modality=moving_modality,
-        )
-
-        # Convert slice shift → mm
-        spacing = iso_fixed.GetSpacing()  # (x, y, z)
-        shift_z_mm = shift_z_slices * spacing[2] * (-1)
-        shift_y_mm = shift_y_slices * spacing[1] * (-1)
-        shift_x_mm = shift_x_slices * spacing[0] * (-1)
-        print(
-            f"{get_datetime()} User‐defined Z-shift: {shift_z_slices} slices = {shift_z_mm:.2f} mm"
-        )
-        print(
-            f"{get_datetime()} User‐defined Y-shift: {shift_y_slices} slices = {shift_y_mm:.2f} mm"
-        )
-        print(
-            f"{get_datetime()} User‐defined X-shift: {shift_x_slices} slices = {shift_x_mm:.2f} mm"
-        )
+    # Fine-tuning
+    fine_tuned_transform = sitk.VersorRigid3DTransform(prealign_transform)
+    if manual_fine_tuning:
+        fine_tuned_transform = tune_initial_registration(fixed_image, moving_image, prealign_transform, mode='manual')
     else:
-        baseline_mi = calc_mutual_information(iso_fixed, iso_moving)
-        print(f"{get_datetime()} Baseline mutual information: {baseline_mi:.4f}")
-        values = np.linspace(-40, 40, 81)
-        samples = np.random.choice(values, size=(1000, 3), replace=True)
-
-        # fire off in parallel on all cores (n_jobs=-1)
-        results = Parallel(n_jobs=-1)(
-            delayed(calc_mi_for_shift)(
-                idx, shifts, iso_fixed, iso_moving, min_val_moving
-            )
-            for idx, shifts in enumerate(samples)
-        )
-        # now scan the returned list for any improvements
-        dx_best = dy_best = dz_best = None
-        for idx, dx, dy, dz, mi in results:
-            if mi > baseline_mi:
-                baseline_mi = mi
-                dx_best, dy_best, dz_best = dx, dy, dz
-                print(f"{idx + 1}. Best MI at shift dx={dx_best:.1f}, dy={dy_best:.1f}, dz={dz_best:.1f}: {mi:.4f}")
-        # final best shifts
-        shift_x_mm = dx_best or 0
-        shift_y_mm = dy_best or 0
-        shift_z_mm = dz_best or 0
+        # translation-only exhaustive search
+        fine_tuned_transform = tune_initial_registration(fixed_image, moving_image, prealign_transform, mode='auto')
 
     # Fine-tuned prealignment
-    tx = sitk.TranslationTransform(3)
-    tx.SetOffset((shift_x_mm, shift_y_mm, shift_z_mm))
-    iso_moving = sitk.Resample(iso_moving, iso_fixed, tx,
+    print(f"{get_datetime()} Fine-tuned transform: {fine_tuned_transform.GetTranslation()}")
+    moving_resampled = sitk.Resample(iso_moving, iso_fixed, fine_tuned_transform,
                                sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
-    mi = calc_mutual_information(iso_fixed, iso_moving)
+    mi = calc_mutual_information(iso_fixed, moving_resampled)
     print(f"{get_datetime()} Mutual information after fine-tuning: {mi:.4f}")
-    # run_viewer(iso_fixed, iso_moving, fixed_modality=fixed_modality, moving_modality=moving_modality
-    #            )
+    run_viewer(iso_fixed, iso_moving, fine_tuned_transform, fixed_modality=fixed_modality, moving_modality=moving_modality)
 
     # Rigid registration
     rigid_transform = perform_rigid_registration(
         iso_fixed,
         iso_moving,
-        sitk.VersorRigid3DTransform,
-        fixed_modality=fixed_modality,
-        moving_modality=moving_modality,
+        fine_tuned_transform,
     )
 
     # Resample for visual check
-    moving_reg = sitk.Resample(iso_moving, iso_fixed, rigid_transform,
+    moving_resampled = sitk.Resample(iso_moving, iso_fixed, rigid_transform,
                                sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
 
     # Show images after registration
     translation = rigid_transform.GetNthTransform(0).GetTranslation()
     print(f"Rigid translation: {translation}")
-    mi = calc_mutual_information(iso_fixed, moving_reg)
+    mi = calc_mutual_information(iso_fixed, moving_resampled)
     print(f"{get_datetime()} Mutual information after rigid registration: {mi:.4f}")
     run_viewer(
         iso_fixed,
-        moving_reg,
+        iso_moving, rigid_transform,
         fixed_modality=fixed_modality,
         moving_modality=moving_modality,
     )
@@ -1045,11 +1119,29 @@ class MultiViewOverlay:
 # --------------------------------------------------------------------
 # Main
 # --------------------------------------------------------------------
-def run_viewer(fixed_image, moving_image,
-               fixed_modality="CT", moving_modality="CT"):
-    fixed_array = sitk.GetArrayFromImage(fixed_image)
-    moving_array = sitk.GetArrayFromImage(moving_image)
-    spacing = fixed_image.GetSpacing()  # (x, y, z)
+def run_viewer(fixed_image, moving_image, transform, fixed_modality="MR", moving_modality="CT"):
+    # Pad the fixed image by 50 slices on both cranial and caudal ends
+    pad_lower = (50, 50, 50)
+    pad_upper = (50, 50, 50)
+    padded_fixed = sitk.ConstantPad(
+        fixed_image,
+        pad_lower,
+        pad_upper,
+        constant=0,
+    )
+
+    resampled_moving = sitk.Resample(
+        moving_image,
+        padded_fixed,
+        transform,
+        sitk.sitkLinear,
+        -1024,
+        moving_image.GetPixelIDValue(),
+    )
+
+    spacing = fixed_image.GetSpacing()
+    fixed_array = sitk.GetArrayFromImage(padded_fixed)
+    moving_array = sitk.GetArrayFromImage(resampled_moving)
     overlay = MultiViewOverlay(
         fixed_array,
         moving_array,
