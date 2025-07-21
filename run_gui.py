@@ -134,15 +134,21 @@ def get_patient_name(directory_path: str) -> str:
 def main():
     load_environment(".env")
     configure_sitk_threads()
-    try:
-        # patient_id = sys.argv[1]
-        # rtplan_label = sys.argv[2]
-        # rtplan_uid = sys.argv[3]
+
+    # If the user passed at least three args, use them…
+    if len(sys.argv) >= 4:
+        patient_id, rtplan_label, rtplan_uid = sys.argv[1:4]
+    else:
+        # …otherwise fall back to environment variables
         patient_id = os.environ.get('PATIENT_ID')
         rtplan_label = os.environ.get('RTPLAN_LABEL')
         rtplan_uid = os.environ.get('RTPLAN_UID')
-    except IndexError:
-        print("Usage: python run_gui.py <patient_id> <rtplan_label> <rtplan_uid>")
+
+    # Now verify that we actually have all three values
+    if not (patient_id and rtplan_label and rtplan_uid):
+        print("Missing parameters! Either pass "
+              "<patient_id> <rtplan_label> <rtplan_uid> on the command line, "
+              "or set PATIENT_ID, RTPLAN_LABEL and RTPLAN_UID in your env.")
         sys.exit(1)
 
     input_dir = Path(os.environ.get("INPUT_DIR")) / patient_id
