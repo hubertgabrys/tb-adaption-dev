@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import tkinter as tk
 from tkinter.scrolledtext import ScrolledText
 from pathlib import Path
@@ -47,6 +48,25 @@ def rename_all_dicom_files(directory_path: str) -> None:
                 process_single_dicom_file(root_dir, fname)
             except Exception:
                 pass
+
+
+def wait_for_stable_imaging(directory: str, interval: float = 1.0,
+                            stable_checks: int = 2) -> dict:
+    """Return imaging series once the number of files stops changing"""
+    previous_total: int | None = None
+    consecutive = 0
+    result = {}
+    while consecutive < stable_checks:
+        result = list_dicom_series(directory, imaging_only=True)
+        total = sum(len(info["files"]) for info in result.values())
+        if total == previous_total:
+            consecutive += 1
+        else:
+            consecutive = 0
+            previous_total = total
+        if consecutive < stable_checks:
+            time.sleep(interval)
+    return result
 
 
 def find_rtstructs_for_series(directory: str, series_uid: str) -> list[str]:
@@ -234,7 +254,7 @@ def main():
         try:
             rename_all_dicom_files(str(input_dir))
 
-            imaging_series = list_dicom_series(str(input_dir), imaging_only=True)
+            imaging_series = wait_for_stable_imaging(str(input_dir))
             for uid, info in imaging_series.items():
                 existing = find_rtstructs_for_series(str(input_dir), uid)
                 if not existing:
