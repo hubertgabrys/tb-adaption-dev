@@ -50,16 +50,16 @@ def rename_all_dicom_files(directory_path: str) -> None:
                 pass
 
 
-def wait_for_stable_imaging(directory: str, interval: float = 2.0,
+def wait_for_stable_imaging(directory: str, interval: float = 1.0,
                             stable_checks: int = 2) -> dict:
-    """Return imaging series once the number of files stops increasing."""
-    previous_total = -1
+    """Return imaging series once the number of files stops changing"""
+    previous_total: int | None = None
     consecutive = 0
     result = {}
     while consecutive < stable_checks:
         result = list_dicom_series(directory, imaging_only=True)
         total = sum(len(info["files"]) for info in result.values())
-        if total == previous_total and total > 0:
+        if total == previous_total:
             consecutive += 1
         else:
             consecutive = 0
