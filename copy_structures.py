@@ -160,6 +160,8 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
         # Special handling for PTV ROIs ending with "+2cm_ph" (should not be skipped due to "_ph")
         if name_lower.startswith("ptv") and name_lower.endswith("+2cm_ph"):
             pass  # allowed
+        elif name_lower in {"or_hip_water_ph", "highdensity_ph"}:
+            pass
         else:
             if name_lower.startswith("zzz") or name_lower.endswith("_ph"):
                 print(f"Skipping ROI {number} ({name})")
