@@ -431,6 +431,32 @@ def main():
                 last_fixed_uid = used_fixed_uid
                 last_moving_uid = used_moving_uid
                 register_status.config(text="\u2705", fg="green")
+
+                if messagebox.askyesno("Copy structures", "Copy structures now?"):
+                    copy_status.config(text="\u23F3", fg="orange")
+                    root.update_idletasks()
+                    register_progress["value"] = 0
+                    register_progress.grid()
+                    try:
+                        def progress_cb(idx, total):
+                            register_progress["maximum"] = total
+                            register_progress["value"] = idx
+                            root.update_idletasks()
+
+                        copy_structures(
+                            str(input_dir),
+                            patient_id,
+                            rtplan_label,
+                            rigid_transform,
+                            series_uid=used_fixed_uid,
+                            base_series_uid=used_moving_uid,
+                            progress_callback=progress_cb,
+                        )
+                        copy_status.config(text="\u2705", fg="green")
+                    except Exception:
+                        copy_status.config(text="\u274C", fg="red")
+                    finally:
+                        register_progress.grid_remove()
             else:
                 register_status.config(text="\u274C", fg="red")
         except Exception:
@@ -444,42 +470,6 @@ def main():
     register_status.grid(row=17, column=1, sticky="w")
 
     copy_status = tk.Label(root, text="", font=("Helvetica", 14))
-
-    def on_copy_structures():
-        if last_rigid_transform is None:
-            messagebox.showerror("Copy structures", "Please perform registration first.")
-            copy_status.config(text="\u274C", fg="red")
-            return
-
-        copy_status.config(text="\u23F3", fg="orange")
-        root.update_idletasks()
-        register_progress["value"] = 0
-        register_progress.grid()
-
-        try:
-            def progress_cb(idx, total):
-                register_progress["maximum"] = total
-                register_progress["value"] = idx
-                root.update_idletasks()
-
-            copy_structures(
-                str(input_dir),
-                patient_id,
-                rtplan_label,
-                last_rigid_transform,
-                series_uid=last_fixed_uid,
-                base_series_uid=last_moving_uid,
-                progress_callback=progress_cb,
-            )
-            copy_status.config(text="\u2705", fg="green")
-        except Exception:
-            copy_status.config(text="\u274C", fg="red")
-        finally:
-            register_progress.grid_remove()
-            on_get_images()
-
-    btn_copy_structures = tk.Button(root, text="Copy structures", command=on_copy_structures)
-    btn_copy_structures.grid(row=18, column=0, sticky="w", padx=10, pady=(0, 10))
     copy_status.grid(row=18, column=1, sticky="w")
 
     register_progress.grid(row=19, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
