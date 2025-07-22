@@ -1120,9 +1120,9 @@ class MultiViewOverlay:
 # Main
 # --------------------------------------------------------------------
 def run_viewer(fixed_image, moving_image, transform, fixed_modality="MR", moving_modality="CT"):
-    # Pad the fixed image by 50 slices on both cranial and caudal ends
-    pad_lower = (50, 50, 50)
-    pad_upper = (50, 50, 50)
+    # Pad the fixed image by 25 slices on both ends
+    pad_lower = (25, 25, 25)
+    pad_upper = (25, 25, 25)
     padded_fixed = sitk.ConstantPad(
         fixed_image,
         pad_lower,
