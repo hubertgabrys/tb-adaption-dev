@@ -133,6 +133,18 @@ def extract_metadata(dicom_file):
     return meta
 
 
+def get_series_description(dicom_file):
+    """Return the SeriesDescription of the given DICOM file in lowercase."""
+    try:
+        ds = pydicom.dcmread(dicom_file, stop_before_pixels=True)
+        desc = getattr(ds, "SeriesDescription", "")
+        if desc is None:
+            return ""
+        return str(desc).strip().lower()
+    except Exception:
+        return ""
+
+
 def _find_rtplan(directory):
     """Return the first RTPLAN dataset found in *directory*."""
     for file_name in os.listdir(directory):
@@ -387,7 +399,13 @@ def perform_initial_registration(fixed_image, moving_image):
     print(f"{get_datetime()} Initial transform: {initial_tx.GetTranslation()}")
     return initial_tx
 
-def tune_initial_registration(fixed_image, moving_image, transform, mode='auto'):
+def tune_initial_registration(
+    fixed_image,
+    moving_image,
+    transform,
+    mode='auto',
+    pad_slices=0,
+):
     if mode == 'auto':
         print(f"{get_datetime()} Translation-only exhaustive start")
         translationTx = sitk.TranslationTransform(3)
@@ -403,7 +421,14 @@ def tune_initial_registration(fixed_image, moving_image, transform, mode='auto')
         print(f"{get_datetime()} Optimal offset: {transform.GetTranslation()}")
         return transform
     elif mode == 'manual':
-        shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(fixed_image, moving_image, transform, fixed_modality="MR", moving_modality="CT")
+        shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(
+            fixed_image,
+            moving_image,
+            transform,
+            fixed_modality="MR",
+            moving_modality="CT",
+            pad_slices=pad_slices,
+        )
 
         # Convert slice shift → mm
         spacing = fixed_image.GetSpacing()
@@ -497,6 +522,9 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         except ValueError:
             fixed_modality = "MR"
             fixed_image, fixed_files, used_fixed_uid = read_dicom_series(fixed_dir, "MR")
+
+    series_desc = get_series_description(fixed_files[0])
+    pad_slices = 25 if series_desc.startswith("t2_tse_tra") else 0
     print(f"{get_datetime()} Reading moving image from:", moving_dir)
     if moving_series_uid:
         moving_modality = moving_modality or "CT"
@@ -573,12 +601,25 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     # Fine-tuning
     fine_tuned_transform = sitk.VersorRigid3DTransform(prealign_transform)
     if manual_fine_tuning:
-        fine_tuned_transform = tune_initial_registration(fixed_image, moving_image, prealign_transform, mode='manual')
+        fine_tuned_transform = tune_initial_registration(
+            fixed_image,
+            moving_image,
+            prealign_transform,
+            mode='manual',
+            pad_slices=pad_slices,
+        )
     else:
-        # translation-only exhaustive search
-        fine_tuned_transform = tune_initial_registration(fixed_image, moving_image, prealign_transform, mode='auto')
-        # run_viewer(iso_fixed, iso_moving, fine_tuned_transform, fixed_modality=fixed_modality,
-        #            moving_modality=moving_modality)
+        if pad_slices > 0:
+            # translation-only exhaustive search for t2_tse_tra series
+            fine_tuned_transform = tune_initial_registration(
+                fixed_image,
+                moving_image,
+                prealign_transform,
+                mode='auto',
+                pad_slices=pad_slices,
+            )
+        else:
+            fine_tuned_transform = prealign_transform
 
     # Fine-tuned prealignment
     print(f"{get_datetime()} Fine-tuned transform: {fine_tuned_transform.GetTranslation()}")
@@ -608,6 +649,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         iso_moving, rigid_transform,
         fixed_modality=fixed_modality,
         moving_modality=moving_modality,
+        pad_slices=pad_slices,
     )
 
     if confirm_fn is None:
@@ -1105,16 +1147,26 @@ class MultiViewOverlay:
 # --------------------------------------------------------------------
 # Main
 # --------------------------------------------------------------------
-def run_viewer(fixed_image, moving_image, transform, fixed_modality="MR", moving_modality="CT"):
-    # Pad the fixed image by 25 slices on both ends
-    pad_lower = (25, 25, 25)
-    pad_upper = (25, 25, 25)
-    padded_fixed = sitk.ConstantPad(
-        fixed_image,
-        pad_lower,
-        pad_upper,
-        constant=0,
-    )
+def run_viewer(
+    fixed_image,
+    moving_image,
+    transform,
+    fixed_modality="MR",
+    moving_modality="CT",
+    pad_slices=0,
+):
+    """Display fixed and moving images with optional padding of the fixed image."""
+    if pad_slices > 0:
+        pad_lower = (pad_slices, pad_slices, pad_slices)
+        pad_upper = (pad_slices, pad_slices, pad_slices)
+        padded_fixed = sitk.ConstantPad(
+            fixed_image,
+            pad_lower,
+            pad_upper,
+            constant=0,
+        )
+    else:
+        padded_fixed = fixed_image
 
     resampled_moving = sitk.Resample(
         moving_image,
