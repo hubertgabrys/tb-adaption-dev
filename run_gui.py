@@ -190,7 +190,7 @@ def main():
     root.grid_columnconfigure(2, weight=1)
 
     # Console output widget
-    console = ScrolledText(root, state="disabled", width=80)
+    console = ScrolledText(root, state="disabled", width=140)
     console.grid(row=0, column=2, rowspan=18, sticky="nsew", padx=(10, 10), pady=10)
 
     # Redirect stdout and stderr to the console widget

@@ -176,7 +176,7 @@ def list_dicom_series(dir_path: str, imaging_only: bool = False) -> dict:
     # 4) log summary
     for info in series_info.values():
         cnt = len(info["files"])
-        print(f"{info['date']} {info['time']} – {info['modality']} – "
+        print(f"  {info['date']} {info['time']} – {info['modality']} – "
               f"{info['description']} (files={cnt})")
 
     return series_info
