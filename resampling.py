@@ -50,44 +50,28 @@ def move_original_ct(folder_path):
     return target_dir
 
 
-def load_dicom_series(folder_path):
+def load_dicom_series(folder_path: str) -> sitk.Image:
     """
-    Load a DICOM series from the given folder using SimpleITK.
-    The DICOM files are sorted based on slice positions extracted from DICOM tags.
-
-    Returns:
-        SimpleITK.Image: The loaded 3D image.
+    Load a DICOM series in one shot using SimpleITK’s GDCM helper.
     """
-    # Get list of files in the directory
-    dicom_files = [f for f in os.listdir(folder_path) if f.startswith("CT") and f.endswith(".dcm")]
-
-    # Ensure there are matching DICOM files
-    if not dicom_files:
-        raise FileNotFoundError("No DICOM files starting with 'CT' and ending with '.dcm' found in the folder.")
-
-    # Create a list of tuples: (slice_position, full_file_path)
-    dicom_slices = []
-    for file_name in dicom_files:
-        file_path = os.path.join(folder_path, file_name)
-        ds = pydicom.dcmread(file_path, stop_before_pixels=True)
-
-        # Use Image Position (Patient) for sorting if available
-        if hasattr(ds, "ImagePositionPatient"):
-            slice_position = ds.ImagePositionPatient[2]  # Z-coordinate
-        else:
-            raise ValueError(f"Cannot determine slice position for file: {file_name}")
-
-        dicom_slices.append((slice_position, file_path))
-
-    # Sort DICOM files based on slice position
-    dicom_slices.sort(key=lambda x: x[0])
-    sorted_file_paths = [file_path for _, file_path in dicom_slices]
-
-    # Load the sorted series using SimpleITK
     reader = sitk.ImageSeriesReader()
-    reader.SetFileNames(sorted_file_paths)
-    image = reader.Execute()
+    # get all series IDs in the folder
+    series_IDs = reader.GetGDCMSeriesIDs(folder_path)
+    if not series_IDs:
+        raise FileNotFoundError(f"No DICOM series found in {folder_path}")
 
+    # pick the first (or choose by modality, UID, etc.)
+    series_id = series_IDs[0]
+
+    # GetGDCMSeriesFileNames will both list *and* sort the files correctly
+    file_names = reader.GetGDCMSeriesFileNames(folder_path, series_id)
+    reader.SetFileNames(file_names)
+
+    # Optionally turn on metadata dictionary update if you need to inspect tags later
+    reader.MetaDataDictionaryArrayUpdateOn()
+
+    # This Execute() call is entirely in C++ and multi‑threaded under the hood
+    image = reader.Execute()
     return image
 
 
