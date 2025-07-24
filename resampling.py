@@ -1,5 +1,4 @@
 import os
-import shutil
 import time
 
 import SimpleITK as sitk
@@ -21,81 +20,27 @@ def get_dicom_value(ds, tag, default=""):
     return value
 
 
-def move_original_ct(folder_path):
-    """
-    Move all DICOM files starting with 'CT' and ending with '.dcm' from
-    the given folder into a new folder named <folder_name>_original_CT
-    in the parent directory.
-
-    Returns:
-        str: The path to the newly created folder containing the original CT files.
-    """
-    parent_dir = os.path.abspath(os.path.join(folder_path, os.pardir))
-    original_folder_name = os.path.basename(folder_path) + "_original_CT"
-    target_dir = os.path.join(parent_dir, original_folder_name)
-
-    # Recreate the target directory if it exists
-    if os.path.exists(target_dir):
-        shutil.rmtree(target_dir)
-    os.makedirs(target_dir, exist_ok=True)
-
-    # Move all "CT...dcm" files
-    for file_name in os.listdir(folder_path):
-        if file_name.startswith("CT") and file_name.endswith(".dcm"):
-            source_path = os.path.join(folder_path, file_name)
-            destination_path = os.path.join(target_dir, file_name)
-            shutil.move(source_path, destination_path)
-
-    return target_dir
-
-
 def load_dicom_series(folder_path):
-    """
-    Load a DICOM series from the given folder using SimpleITK.
-    The DICOM files are sorted based on slice positions extracted from DICOM tags.
+    """Load and return the DICOM series in *folder_path* using SimpleITK."""
 
-    Returns:
-        SimpleITK.Image: The loaded 3D image.
-    """
-    # Get list of files in the directory
-    dicom_files = [f for f in os.listdir(folder_path) if f.startswith("CT") and f.endswith(".dcm")]
+    # Discover the series using GDCM which is faster than manual looping.
+    series_ids = sitk.ImageSeriesReader.GetGDCMSeriesIDs(folder_path)
+    if not series_ids:
+        raise FileNotFoundError("No DICOM series found in the folder.")
 
-    # Ensure there are matching DICOM files
-    if not dicom_files:
-        raise FileNotFoundError("No DICOM files starting with 'CT' and ending with '.dcm' found in the folder.")
+    # Use the first series id found. Filter for files starting with CT to avoid
+    # picking up other modalities if present.
+    file_names = [f for f in sitk.ImageSeriesReader.GetGDCMSeriesFileNames(folder_path, series_ids[0])
+                  if os.path.basename(f).startswith("CT")]
 
-    # Create a list of tuples: (slice_position, full_file_path)
-    dicom_slices = []
-    for file_name in dicom_files:
-        file_path = os.path.join(folder_path, file_name)
-        ds = pydicom.dcmread(file_path, stop_before_pixels=True)
+    if not file_names:
+        raise FileNotFoundError("No CT DICOM files found in the folder.")
 
-        # Use Image Position (Patient) for sorting if available
-        if hasattr(ds, "ImagePositionPatient"):
-            slice_position = ds.ImagePositionPatient[2]  # Z-coordinate
-        else:
-            raise ValueError(f"Cannot determine slice position for file: {file_name}")
-
-        dicom_slices.append((slice_position, file_path))
-
-    # Sort DICOM files based on slice position
-    dicom_slices.sort(key=lambda x: x[0])
-    sorted_file_paths = [file_path for _, file_path in dicom_slices]
-
-    # Load the sorted series using SimpleITK
     reader = sitk.ImageSeriesReader()
-    reader.SetFileNames(sorted_file_paths)
+    reader.SetFileNames(file_names)
     image = reader.Execute()
 
     return image
-
-
-def delete_folder(folder_path):
-    """
-    Deletes the specified folder and all its contents if it exists.
-    """
-    if os.path.exists(folder_path):
-        shutil.rmtree(folder_path)
 
 
 def resample_image_to_resolution(image, new_spacing):
@@ -109,6 +54,9 @@ def resample_image_to_resolution(image, new_spacing):
     Returns:
     - Resampled 3D image with the new voxel spacing.
     """
+    # Ensure multi-threading is enabled for better performance
+    sitk.ProcessObject.SetGlobalDefaultNumberOfThreads(os.cpu_count())
+
     # Get original spacing and size
     original_spacing = image.GetSpacing()  # Current voxel dimensions
     original_size = image.GetSize()  # Current image size (number of voxels)
@@ -264,24 +212,28 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
 def resample_ct(current_folder):
     """
     Main workflow:
-      1. Check the current image resolution. If the spacing is already
-         1.5x1.5x1.5 mm, don't perform the next steps.
-      2. Move DICOM files to a new folder named <folder>_original_CT.
-      3. Load original CT (SimpleITK).
-      4. Resample to new_spacing.
-      5. Save resampled CT as DICOM.
-      6. Delete the folder with the original CT.
+      1. Inspect the first CT slice. If spacing is already 1.5x1.5x1.5 mm,
+         abort.
+      2. Load the CT series with SimpleITK.
+      3. Resample to new_spacing.
+      4. Save resampled CT as DICOM in the same folder.
     """
 
-    # Step 1: Check current spacing and skip resampling if already correct
+    # Step 1: Check current spacing using the header of the first slice
     print(f"{get_datetime()} Checking current CT resolution")
-    try:
-        current_CT = load_dicom_series(current_folder)
-    except FileNotFoundError:
+    dicom_files = [f for f in os.listdir(current_folder) if f.startswith("CT") and f.endswith(".dcm")]
+    if not dicom_files:
         print(f"{get_datetime()} No CT series found -> skipping resampling")
         return "aborted"
 
-    current_spacing = current_CT.GetSpacing()
+    header = pydicom.dcmread(os.path.join(current_folder, dicom_files[0]), stop_before_pixels=True)
+    try:
+        spacing_x, spacing_y = map(float, header.PixelSpacing)
+        spacing_z = float(getattr(header, "SliceThickness", 0))
+        current_spacing = (spacing_x, spacing_y, spacing_z)
+    except Exception:
+        current_CT = load_dicom_series(current_folder)
+        current_spacing = current_CT.GetSpacing()
     print(f"Current CT spacing: {current_spacing}")
 
     if all(abs(sp - 1.5) < 1e-3 for sp in current_spacing):
@@ -290,25 +242,17 @@ def resample_ct(current_folder):
         )
         return "aborted"
 
-    # Step 2: Move the original CT to another folder
-    print(f"{get_datetime()} Move the original CT to another folder")
-    moved_original_CT_folder = move_original_ct(current_folder)
+    # Step 2: Load the original CT
+    print(f"{get_datetime()} Reading the original CT")
+    original_CT = load_dicom_series(current_folder)
 
-    # Step 3: Load the original CT from the moved folder
-    print(f"{get_datetime()} Reading the original sCT")
-    original_CT = load_dicom_series(moved_original_CT_folder)
-
-    # Step 4: Resample to a user-defined resolution
+    # Step 3: Resample to a user-defined resolution
     print(f"{get_datetime()} Resampling to the 1.5x1.5x1.5 mm resolution")
     new_spacing = [1.5, 1.5, 1.5]  # in mm
     resampled_CT = resample_image_to_resolution(original_CT, new_spacing)
 
-    # Step 5: Write the resampled CT to the subfolder
-    print(f"{get_datetime()} Saving the resampled sCT")
-    save_resampled_image_as_dicom(resampled_CT, moved_original_CT_folder, current_folder)
-
-    # Step 6: Delete the original CT to avoid problems
-    print(f"{get_datetime()} Deleting the original CT")
-    delete_folder(moved_original_CT_folder)
+    # Step 4: Write the resampled CT to the same folder
+    print(f"{get_datetime()} Saving the resampled CT")
+    save_resampled_image_as_dicom(resampled_CT, current_folder, current_folder)
 
     return "success"
