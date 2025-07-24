@@ -57,7 +57,7 @@ def rename_all_dicom_files(directory_path: str) -> None:
             pass  # you could catch exceptions here if needed
 
 
-def wait_for_stable_imaging(directory: str, interval: float = 0.0,
+def wait_for_stable_imaging(directory: str, interval: float = 0.25,
                             stable_checks: int = 2) -> dict:
     """Return imaging series once the number of files stops changing"""
     previous_total: int | None = None
