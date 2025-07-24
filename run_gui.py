@@ -547,7 +547,15 @@ def main():
         menu = dropdown["menu"]
         menu.delete(0, 'end')
         selection_map.clear()
-        filtered_uids = [uid for uid, info in series_info.items() if info.get('modality') in ('CT', 'MR')]
+        filtered_uids = [
+            uid
+            for uid, info in series_info.items()
+            if info.get('modality') in ('CT', 'MR')
+            and (
+                info.get('description', '').startswith('t2_tse_tra')
+                or info.get('description', '').startswith('sCT_sp')
+            )
+        ]
         for uid in filtered_uids:
             info = series_info[uid]
             text = checkbox_texts.get(uid, info['description'])
