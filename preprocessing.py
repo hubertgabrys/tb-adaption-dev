@@ -40,6 +40,39 @@ def rename_file_by_modality(directory_path: str, filename: str, modality: str) -
         os.rename(old_filepath, new_filepath)
 
 
+def _get_referenced_series(ds) -> set[str]:
+    """Return a set of SeriesInstanceUIDs referenced by *ds*."""
+    referenced = set()
+    modality = getattr(ds, "Modality", "")
+    if modality == "RTSTRUCT":
+        try:
+            for fr in ds.ReferencedFrameOfReferenceSequence:
+                for st in fr.RTReferencedStudySequence:
+                    for se in st.RTReferencedSeriesSequence:
+                        uid = getattr(se, "SeriesInstanceUID", None)
+                        if uid:
+                            referenced.add(uid)
+        except Exception:
+            pass
+    elif modality == "REG":
+        try:
+            if hasattr(ds, "ReferencedSeriesSequence"):
+                for item in ds.ReferencedSeriesSequence:
+                    uid = getattr(item, "SeriesInstanceUID", None)
+                    if uid:
+                        referenced.add(uid)
+            if hasattr(ds, "StudiesContainingOtherReferencedInstancesSequence"):
+                for study in ds.StudiesContainingOtherReferencedInstancesSequence:
+                    if hasattr(study, "ReferencedSeriesSequence"):
+                        for item in study.ReferencedSeriesSequence:
+                            uid = getattr(item, "SeriesInstanceUID", None)
+                            if uid:
+                                referenced.add(uid)
+        except Exception:
+            pass
+    return referenced
+
+
 def process_single_dicom_file(directory_path: str, filename: str) -> None:
     """
     Process a single DICOM file:
@@ -122,7 +155,7 @@ def _extract_series_record(fpath: Path, imaging_only: bool):
         time = f"{hh}:{mm}{ss}"
     desc = getattr(ds, "SeriesDescription", "").strip() or "<no description>"
 
-    return {
+    record = {
         "uid": uid,
         "date": date,
         "time": time,
@@ -130,6 +163,11 @@ def _extract_series_record(fpath: Path, imaging_only: bool):
         "description": desc,
         "file": str(fpath)
     }
+
+    if modality in ("RTSTRUCT", "REG"):
+        record["references"] = list(_get_referenced_series(ds))
+
+    return record
 
 def list_dicom_series(dir_path: str, imaging_only: bool = False) -> dict:
     print(f"{get_datetime()} Listing "
@@ -165,8 +203,13 @@ def list_dicom_series(dir_path: str, imaging_only: bool = False) -> dict:
                 "time":       rec["time"],
                 "modality":   rec["modality"],
                 "description":rec["description"],
-                "files":      []
+                "files":      [],
             }
+            if "references" in rec:
+                series_info[uid]["references"] = set(rec["references"])
+        else:
+            if "references" in rec:
+                series_info[uid].setdefault("references", set()).update(rec["references"])
         series_info[uid]["files"].append(rec["file"])
 
     if not series_info:
@@ -178,6 +221,11 @@ def list_dicom_series(dir_path: str, imaging_only: bool = False) -> dict:
         cnt = len(info["files"])
         print(f"  {info['date']} {info['time']} – {info['modality']} – "
               f"{info['description']} (files={cnt})")
+
+    # convert any reference sets to lists for easier consumption
+    for info in series_info.values():
+        if "references" in info:
+            info["references"] = list(info["references"])
 
     return series_info
 
