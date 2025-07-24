@@ -426,11 +426,7 @@ def tune_initial_registration(fixed_image, moving_image, transform, mode='auto')
         return None
 
 
-def perform_rigid_registration(
-    fixed_image,
-    moving_image,
-    initial_transform,
-):
+def perform_rigid_registration(fixed_image, moving_image, initial_transform):
     """Perform rigid registration of two images."""
     print(f"{get_datetime()} Initializing rigid registration...")
 
@@ -570,14 +566,6 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         iso_fixed,
         iso_moving,
     )
-    # iso_moving = sitk.Resample(
-    #     iso_moving,
-    #     iso_fixed,
-    #     prealign_transform,
-    #     sitk.sitkLinear,
-    #     min_val_moving,
-    #     iso_moving.GetPixelIDValue(),
-    # )
 
     # Clamp intensities
     # iso_moving = sitk.Clamp(iso_moving, lowerBound=-160, upperBound=240)
@@ -592,8 +580,8 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     else:
         # translation-only exhaustive search
         fine_tuned_transform = tune_initial_registration(fixed_image, moving_image, prealign_transform, mode='auto')
-        run_viewer(iso_fixed, iso_moving, fine_tuned_transform, fixed_modality=fixed_modality,
-                   moving_modality=moving_modality)
+        # run_viewer(iso_fixed, iso_moving, fine_tuned_transform, fixed_modality=fixed_modality,
+        #            moving_modality=moving_modality)
 
     # Fine-tuned prealignment
     print(f"{get_datetime()} Fine-tuned transform: {fine_tuned_transform.GetTranslation()}")
