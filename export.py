@@ -16,7 +16,12 @@ SERVER_AE_TITLE = os.environ.get('SERVER_AE_TITLE')
 SERVER_IP = os.environ.get('SERVER_IP')
 SERVER_PORT = int(os.environ.get('SERVER_PORT'))
 
-ALLOWED_SERIES = ['SyntheticCT HU', 'sCTp1-Dixon-HR_in', 't2_tse_tra', "Spatial Registration (Rigid)"]
+ALLOWED_SERIES = [
+    'SyntheticCT HU',
+    'sCTp1-Dixon-HR_in',
+    't2_tse_tra',
+    'Spatial Registration (Rigid)',
+]
 
 
 def get_dicom_files(dir_path):
@@ -51,7 +56,8 @@ def send_file(assoc, ds):
     return status
 
 
-def send2aria(dir_path):
+def send_files_to_aria(filepaths, progress_callback=None):
+    """Send the DICOM *filepaths* to the ARIA server."""
     ae = AE(socket.gethostname())
     ae.add_requested_context(CTImageStorage)
     ae.add_requested_context(MRImageStorage)
@@ -61,51 +67,40 @@ def send2aria(dir_path):
     ae.acse_timeout = 1200
     ae.dimse_timeout = 1200
     ae.network_timeout = 1200
+
     assoc = ae.associate(SERVER_IP, SERVER_PORT, ae_title=SERVER_AE_TITLE)
     if not assoc.is_established:
-        print("Failed to establish association for a thread.")
-        return 0
+        print("Failed to establish association.")
+        return False
 
-    image_files, rtstruct_files, reg_files = get_dicom_files(dir_path)
-    # print()
-    print("Image files")
-    for series in ALLOWED_SERIES:
-        # Filter image files that include the allowed series string in their series description.
-        series_files = [f for f in image_files if series in f[1]]  # f[1] is series_desc
-        if series_files:
-            for f, _ in tqdm(series_files, desc=series):
-                ds = pydicom.dcmread(f)
-                status = send_file(assoc, ds)
-                if status and status.Status == 0x0000:
-                    os.remove(f)
-                else:
-                    print(f"Failed to send file: {f}")
-
-    # print()
-    print("RTStruct files")
-    for series in ALLOWED_SERIES:
-        # Filter RTStruct files that include the allowed series string in their series description.
-        series_files = [f for f in rtstruct_files if series in f[1]]
-        if series_files:
-            for f, _ in tqdm(series_files, desc=series):
-                ds = pydicom.dcmread(f)
-                status = send_file(assoc, ds)
-                if status and status.Status == 0x0000:
-                    os.remove(f)
-                else:
-                    print(f"Failed to send file: {f}")
-
-    print("REG files")
-    for series in ALLOWED_SERIES:
-        # Filter RTStruct files that include the allowed series string in their series description.
-        series_files = [f for f in reg_files if series in f[1]]
-        if series_files:
-            for f, _ in tqdm(series_files, desc=series):
-                ds = pydicom.dcmread(f)
-                status = send_file(assoc, ds)
-                if status and status.Status == 0x0000:
-                    os.remove(f)
-                else:
-                    print(f"Failed to send file: {f}")
+    success = True
+    total = len(filepaths)
+    for idx, fpath in enumerate(filepaths, 1):
+        ds = pydicom.dcmread(fpath)
+        status = send_file(assoc, ds)
+        if status and status.Status == 0x0000:
+            try:
+                os.remove(fpath)
+            except Exception:
+                pass
+        else:
+            print(f"Failed to send file: {fpath}")
+            success = False
+        if progress_callback:
+            progress_callback(idx, total)
 
     assoc.release()
+    return success
+
+
+def send2aria(dir_path):
+    """Send all allowed series in *dir_path* to the ARIA server."""
+    image_files, rtstruct_files, reg_files = get_dicom_files(dir_path)
+
+    filepaths = [
+        *(f for f, _ in image_files),
+        *(f for f, _ in rtstruct_files),
+        *(f for f, _ in reg_files),
+    ]
+
+    return send_files_to_aria(filepaths)
