@@ -1,6 +1,8 @@
 import datetime
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 import pydicom
 import pyzipper
@@ -96,83 +98,86 @@ def zip_directory(directory_path, output_zip_path, password=None):
     finally:
         zipf.close()
 
+def _extract_series_record(fpath: Path, imaging_only: bool):
+    """Read just enough of the header to form one series entry, or None."""
+    try:
+        ds = pydicom.dcmread(str(fpath), stop_before_pixels=True, force=True)
+    except Exception:
+        return None
+
+    modality = getattr(ds, "Modality", "").strip() or "<no modality>"
+    if imaging_only and modality in ("REG", "RTSTRUCT"):
+        return None
+
+    uid = getattr(ds, "SeriesInstanceUID", None)
+    if not uid:
+        return None
+
+    date = getattr(ds, "SeriesDate", getattr(ds, "StudyDate", ""))
+    time = getattr(ds, "SeriesTime", getattr(ds, "StudyTime", ""))
+    # normalize time
+    if time and len(time) >= 4:
+        hh, mm = time[:2], time[2:4]
+        ss = f":{time[4:6]}" if len(time) >= 6 else ""
+        time = f"{hh}:{mm}{ss}"
+    desc = getattr(ds, "SeriesDescription", "").strip() or "<no description>"
+
+    return {
+        "uid": uid,
+        "date": date,
+        "time": time,
+        "modality": modality,
+        "description": desc,
+        "file": str(fpath)
+    }
+
 def list_dicom_series(dir_path: str, imaging_only: bool = False) -> dict:
-    """Return information about DICOM series found under *dir_path*.
+    print(f"{get_datetime()} Listing "
+          f"{'imaging ' if imaging_only else 'all '}DICOM series in: {dir_path}")
 
-    If *imaging_only* is ``True`` only imaging modalities (e.g. CT, MR) are
-    included; non-imaging series like ``RTSTRUCT`` or ``REG`` are skipped.
-
-    The returned dictionary is structured as::
-
-        {
-            uid: {
-                "date": str,
-                "time": str,
-                "modality": str,
-                "description": str,
-                "files": [file1, file2, ...],
-            }
-        }
-    """
-    print(f"{get_datetime()} Listing DICOM series in directory: {dir_path}")
-    if not os.path.exists(dir_path):
-        print(f"Directory does not exist: {dir_path}")
-        return {}
-    if not os.path.isdir(dir_path):
-        print(f"Path is not a directory: {dir_path}")
-        return {}
-    if not os.listdir(dir_path):
-        print(f"Directory is empty: {dir_path}")
+    root = Path(dir_path)
+    if not root.is_dir() or not any(root.iterdir()):
+        print(f"Directory is missing or empty: {dir_path}")
         return {}
 
+    # 1) gather all .dcm files recursively
+    dcm_files = list(root.rglob("*.dcm"))
+
+    # 2) read headers in parallel
+    records = []
+    with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
+        futures = [
+            pool.submit(_extract_series_record, p, imaging_only)
+            for p in dcm_files
+        ]
+        for fut in as_completed(futures):
+            rec = fut.result()
+            if rec:
+                records.append(rec)
+
+    # 3) merge into series_info
     series_info = {}
-
-    for root, _, files in os.walk(dir_path):
-        for fname in files:
-            fpath = os.path.join(root, fname)
-            try:
-                ds = pydicom.dcmread(fpath, stop_before_pixels=True, force=True)
-            except Exception:
-                continue
-
-            modality = getattr(ds, "Modality", "").strip()
-            if imaging_only and modality in ("REG", "RTSTRUCT"):
-                continue
-
-            uid = getattr(ds, "SeriesInstanceUID", None)
-            if not uid:
-                continue
-
-            if uid not in series_info:
-                date = getattr(ds, "SeriesDate",
-                               getattr(ds, "StudyDate", ""))
-                time = getattr(ds, "SeriesTime",
-                               getattr(ds, "StudyTime", ""))
-                if time and len(time) >= 4:
-                    hh, mm = time[:2], time[2:4]
-                    ss = f":{time[4:6]}" if len(time) >= 6 else ""
-                    time = f"{hh}:{mm}{ss}"
-                desc = getattr(ds, "SeriesDescription", "").strip() or "<no description>"
-                modality = getattr(ds, "Modality", "").strip() or "<no modality>"
-
-                series_info[uid] = {
-                    "date": date,
-                    "time": time,
-                    "modality": modality,
-                    "description": desc,
-                    "files": []
-                }
-
-            series_info[uid]["files"].append(fpath)
+    for rec in records:
+        uid = rec["uid"]
+        if uid not in series_info:
+            series_info[uid] = {
+                "date":       rec["date"],
+                "time":       rec["time"],
+                "modality":   rec["modality"],
+                "description":rec["description"],
+                "files":      []
+            }
+        series_info[uid]["files"].append(rec["file"])
 
     if not series_info:
         print(f"No DICOM series found in directory: {dir_path}")
         return {}
 
+    # 4) log summary
     for info in series_info.values():
-        count = len(info["files"])
-        print(f"{info['date']} {info['time']} – {info['modality']} - {info['description']} "
-              f"(number of files = {count})")
+        cnt = len(info["files"])
+        print(f"{info['date']} {info['time']} – {info['modality']} – "
+              f"{info['description']} (files={cnt})")
 
     return series_info
 
