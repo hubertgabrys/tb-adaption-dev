@@ -112,7 +112,7 @@ def resample_image_to_resolution(image, new_spacing):
     # Get original spacing and size
     original_spacing = image.GetSpacing()  # Current voxel dimensions
     original_size = image.GetSize()  # Current image size (number of voxels)
-    print("Original spacing: ", original_spacing)
+    print(f"  Original spacing: {[round(e,1) for e in original_spacing]}")
 
     # Calculate the new size based on the new spacing
     # New size (number of voxels) is calculated to preserve physical image dimensions
@@ -143,7 +143,7 @@ def resample_image_to_resolution(image, new_spacing):
     # Preserve the original pixel type when casting to avoid HU wrap-around
     # issues when saving the resampled slices as DICOM.
     resampled_image = sitk.Cast(resampled_image, image.GetPixelID())
-    print("resampled_image spacing: ", resampled_image.GetSpacing())
+    print(f"  Resampled image spacing: {[round(e, 1) for e in resampled_image.GetSpacing()]}")
 
     return resampled_image
 
@@ -273,16 +273,21 @@ def resample_ct(current_folder):
       6. Delete the folder with the original CT.
     """
 
-    # Step 1: Check current spacing and skip resampling if already correct
+    # Step 1: Check current spacing using the header of the first slice
     print(f"{get_datetime()} Checking current CT resolution")
-    try:
-        current_CT = load_dicom_series(current_folder)
-    except FileNotFoundError:
+    dicom_files = [f for f in os.listdir(current_folder) if f.startswith("CT") and f.endswith(".dcm")]
+    if not dicom_files:
         print(f"{get_datetime()} No CT series found -> skipping resampling")
         return "aborted"
 
-    current_spacing = current_CT.GetSpacing()
-    print(f"Current CT spacing: {current_spacing}")
+    header = pydicom.dcmread(os.path.join(current_folder, dicom_files[0]), stop_before_pixels=True)
+    try:
+        spacing_x, spacing_y = map(float, header.PixelSpacing)
+        spacing_z = float(getattr(header, "SliceThickness", 0))
+        current_spacing = (spacing_x, spacing_y, spacing_z)
+    except Exception:
+        current_CT = load_dicom_series(current_folder)
+        current_spacing = current_CT.GetSpacing()
 
     if all(abs(sp - 1.5) < 1e-3 for sp in current_spacing):
         print(
