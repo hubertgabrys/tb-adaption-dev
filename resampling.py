@@ -1,6 +1,7 @@
 import os
 import shutil
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import SimpleITK as sitk
 import pydicom
@@ -171,10 +172,6 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
     # Load the first slice with pydicom to retreive tags
     original_CT_pydicom = pydicom.dcmread(dicom_file_paths[0])
 
-    writer = sitk.ImageFileWriter()
-    # Use the UID values explicitly stored in the metadata and do not let
-    # SimpleITK generate new identifiers automatically.
-    writer.KeepOriginalImageUIDOn()
 
     # Copy relevant tags from the original meta-data dictionary (private tags are
     # also accessible).
@@ -224,41 +221,37 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
 
     spacing_resampled = resampled_CT.GetSpacing()  # (spacing_x, spacing_y, spacing_z)
 
-    for i in range(resampled_CT.GetDepth()):
+    def write_slice(i: int) -> None:
         image_slice = resampled_CT[:, :, i]
+
         # Tags shared by the series.
         for tag, value in series_tag_values:
             image_slice.SetMetaData(tag, str(value))
+
         # Slice specific tags.
-        #   Instance Creation Date
-        image_slice.SetMetaData("0008|0012", time.strftime("%Y%m%d"))
-        #   Instance Creation Time
-        image_slice.SetMetaData("0008|0013", time.strftime("%H%M%S"))
-        #   Image Position (Patient)
+        image_slice.SetMetaData("0008|0012", time.strftime("%Y%m%d"))  # Instance Creation Date
+        image_slice.SetMetaData("0008|0013", time.strftime("%H%M%S"))  # Instance Creation Time
         image_slice.SetMetaData(
             "0020|0032",
             "\\".join(map(str, resampled_CT.TransformIndexToPhysicalPoint((0, 0, i)))),
         )
-        #   Instance Number - DICOM uses 1-based numbering
-        image_slice.SetMetaData("0020|0013", str(i + 1))
-        #   SOP Instance UID - unique per slice
-        image_slice.SetMetaData("0008|0018", generate_uid())
-        # Set slice thickness (assuming uniform thickness)
+        image_slice.SetMetaData("0020|0013", str(i + 1))  # Instance Number
+        image_slice.SetMetaData("0008|0018", generate_uid())  # SOP Instance UID
         image_slice.SetMetaData("0018|0050", f"{spacing_resampled[2]:.6f}")  # Slice Thickness
+        image_slice.SetMetaData("0008|0008", "DERIVED\\SECONDARY\\AXIAL")  # Image type
 
-        # Image type
-        image_slice.SetMetaData("0008|0008", "DERIVED\\SECONDARY\\AXIAL")
-
-        # Write to the output directory and add the extension dcm, to force writing
-        # in DICOM format.
         filename_save = os.path.join(output_folder, f"CT_Resampled_Slice_{i:04d}.dcm")
-        writer.SetFileName(filename_save)
-        writer.Execute(image_slice)
+        local_writer = sitk.ImageFileWriter()
+        local_writer.KeepOriginalImageUIDOn()
+        local_writer.SetFileName(filename_save)
+        local_writer.Execute(image_slice)
 
-        # This will fix issues with German special characters in patient name
         ds = pydicom.dcmread(filename_save)
         ds.PatientName = get_dicom_value(original_CT_pydicom, Tag(0x00100010))
         ds.save_as(filename_save)
+
+    with ThreadPoolExecutor() as executor:
+        list(executor.map(write_slice, range(resampled_CT.GetDepth())))
 
 
 def resample_ct(current_folder):
