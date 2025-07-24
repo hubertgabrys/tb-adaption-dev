@@ -382,8 +382,8 @@ def main():
         on_get_images()
 
     btn_cleanup = tk.Button(root, text="Delete selected series", command=on_cleanup)
-    btn_cleanup.grid(row=10, column=0, sticky="w", padx=10, pady=(0, 10))
-    cleanup_status.grid(row=10, column=1, sticky="w")
+    btn_cleanup.grid(row=20, column=0, sticky="w", padx=10, pady=(0, 10))
+    cleanup_status.grid(row=20, column=1, sticky="w")
 
     # Resample button
     resample_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -541,23 +541,6 @@ def main():
 
     register_progress.grid(row=19, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
     register_progress.grid_remove()
-
-    # Reset button to clear status indicators
-    def on_reset():
-        for lbl in (
-            baseplan_status,
-            images_status,
-            cleanup_status,
-            resample_status,
-            register_status,
-            copy_status,
-        ):
-            lbl.config(text="")
-        register_progress.grid_remove()
-        register_progress["value"] = 0
-
-    btn_reset = tk.Button(root, text="Reset", command=on_reset)
-    btn_reset.grid(row=20, column=0, sticky="w", padx=10, pady=(0, 10))
 
     def update_dropdown(*args):
         # show CT and MR series in the dropdown for the fixed image
