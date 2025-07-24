@@ -18,10 +18,11 @@ from resampling import resample_ct
 from utils import (
     load_environment,
     check_if_ct_present,
-    configure_sitk_threads,
+    configure_sitk_threads, count_files, get_datetime,
 )
 from segmentation import create_empty_rtstruct
 from copy_structures import copy_structures, _rtstruct_references_series
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class ConsoleRedirector:
@@ -41,13 +42,19 @@ class ConsoleRedirector:
 
 
 def rename_all_dicom_files(directory_path: str) -> None:
-    """Rename all DICOM files within directory_path using modality prefixes."""
-    for root_dir, _, files in os.walk(directory_path):
-        for fname in files:
-            try:
-                process_single_dicom_file(root_dir, fname)
-            except Exception:
-                pass
+    print(f"{get_datetime()} Renaming DICOM files…")
+    with os.scandir(directory_path) as it:
+        files = [
+            entry.name for entry in it
+            if entry.is_file() and entry.name.lower().endswith('.dcm')
+        ]
+
+    with ThreadPoolExecutor(max_workers=os.cpu_count() or 1) as pool:
+        for _ in as_completed([
+            pool.submit(process_single_dicom_file, directory_path, fname)
+            for fname in files
+        ]):
+            pass  # you could catch exceptions here if needed
 
 
 def wait_for_stable_imaging(directory: str, interval: float = 0.0,
@@ -57,8 +64,9 @@ def wait_for_stable_imaging(directory: str, interval: float = 0.0,
     consecutive = 0
     result = {}
     while consecutive < stable_checks:
-        result = list_dicom_series(directory, imaging_only=True)
-        total = sum(len(info["files"]) for info in result.values())
+        # result = list_dicom_series(directory, imaging_only=True)
+        # total = sum(len(info["files"]) for info in result.values())
+        total = count_files(directory)
         if total == previous_total:
             consecutive += 1
         else:
@@ -89,6 +97,7 @@ def find_rtstructs_for_series(directory: str, series_uid: str) -> list[str]:
 
 def remove_orphan_rt_files(directory: str, valid_series: set[str]) -> None:
     """Delete RTSTRUCT or REG files referencing series not present in *valid_series*."""
+    print(f"{get_datetime()} Removing orphan RTSTRUCT/REG files...")
     for fname in os.listdir(directory):
         fpath = os.path.join(directory, fname)
         if not fname.lower().endswith(".dcm"):
@@ -218,6 +227,8 @@ def main():
     baseplan_status = tk.Label(root, text="", font=("Helvetica", 14))
 
     def on_get_base_plan():
+        print(f"{get_datetime()} Getting the base plan...")
+        start_time = time.time()
         baseplan_status.config(text="\u23F3", fg="orange")  # hourglass
         root.update_idletasks()
         try:
@@ -229,6 +240,9 @@ def main():
                 base_series_info.update(list_dicom_series(str(base_dir)))
                 update_bp_selection()
             baseplan_status.config(text="\u2705", fg="green")
+            end_time = time.time()
+            print(f"{get_datetime()} Getting the base plan took {end_time - start_time:.2f} seconds")
+            print(f"{get_datetime()} DONE\n")
         except Exception:
             baseplan_status.config(text="\u274C", fg="red")
 
@@ -248,20 +262,21 @@ def main():
     checkbox_texts = {}
 
     def on_get_images():
+        print(f"{get_datetime()} Getting images from {input_dir}...")
+        start_time = time.time()
         nonlocal series_info, series_vars, checkbox_texts
         images_status.config(text="\u23F3", fg="orange")  # hourglass
         root.update_idletasks()
         try:
             rename_all_dicom_files(str(input_dir))
-
-            imaging_series = wait_for_stable_imaging(str(input_dir))
+            wait_for_stable_imaging(str(input_dir))
+            imaging_series = list_dicom_series(str(input_dir), imaging_only=True)
             for uid, info in imaging_series.items():
                 existing = find_rtstructs_for_series(str(input_dir), uid)
                 if not existing:
                     create_empty_rtstruct(str(input_dir), uid, info["files"])
 
             remove_orphan_rt_files(str(input_dir), set(imaging_series.keys()))
-
             series_info = list_dicom_series(str(input_dir))
 
             # Clear previous entries
@@ -286,6 +301,9 @@ def main():
             # Update dropdown after loading
             update_dropdown()
             images_status.config(text="\u2705", fg="green")
+            end_time = time.time()
+            print(f"{get_datetime()} Getting the images {end_time - start_time:.2f} seconds")
+            print(f"{get_datetime()} DONE\n")
         except Exception:
             images_status.config(text="\u274C", fg="red")
 

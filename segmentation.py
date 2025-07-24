@@ -6,6 +6,7 @@ from pydicom.dataset import Dataset, FileDataset
 from pydicom.uid import generate_uid
 
 from rtstruct_id import create_rtstruct_id
+from utils import get_datetime
 
 
 def create_empty_rtstruct(dir_path, series_uid, filepaths):
@@ -13,6 +14,7 @@ def create_empty_rtstruct(dir_path, series_uid, filepaths):
     Create an empty but DICOM-valid RTSTRUCT file for the specified SeriesInstanceUID.
     """
 
+    print(f"{get_datetime()} Creating empty RTSTRUCT for SeriesInstanceUID: {series_uid}")
     first_dataset = pydicom.dcmread(filepaths[0], stop_before_pixels=True)
 
     rtstruct_uid = generate_uid()
