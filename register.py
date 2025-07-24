@@ -394,7 +394,7 @@ def tune_initial_registration(fixed_image, moving_image, transform, mode='auto')
         translationTx.SetOffset(transform.GetTranslation())
         registration_method = sitk.ImageRegistrationMethod()
         registration_method.SetMetricAsMattesMutualInformation(50)
-        registration_method.SetOptimizerAsExhaustive(numberOfSteps=[3, 3, 3], stepLength=15)
+        registration_method.SetOptimizerAsExhaustive(numberOfSteps=[1, 1, 1], stepLength=30)
         registration_method.SetInitialTransform(translationTx)
         registration_method.SetInterpolator(sitk.sitkLinear)
         auto_translation = registration_method.Execute(fixed_image, moving_image)
@@ -582,8 +582,8 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     # Clamp intensities
     # iso_moving = sitk.Clamp(iso_moving, lowerBound=-160, upperBound=240)
 
-    mi = calc_mutual_information(iso_fixed, iso_moving)
-    print(f"{get_datetime()} Baseline mutual information: {mi:.4f}")
+    # mi = calc_mutual_information(iso_fixed, iso_moving)
+    # print(f"{get_datetime()} Baseline mutual information: {mi:.4f}")
 
     # Fine-tuning
     fine_tuned_transform = sitk.VersorRigid3DTransform(prealign_transform)
@@ -592,14 +592,15 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     else:
         # translation-only exhaustive search
         fine_tuned_transform = tune_initial_registration(fixed_image, moving_image, prealign_transform, mode='auto')
+        run_viewer(iso_fixed, iso_moving, fine_tuned_transform, fixed_modality=fixed_modality,
+                   moving_modality=moving_modality)
 
     # Fine-tuned prealignment
     print(f"{get_datetime()} Fine-tuned transform: {fine_tuned_transform.GetTranslation()}")
-    moving_resampled = sitk.Resample(iso_moving, iso_fixed, fine_tuned_transform,
-                               sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
-    mi = calc_mutual_information(iso_fixed, moving_resampled)
-    print(f"{get_datetime()} Mutual information after fine-tuning: {mi:.4f}")
-    run_viewer(iso_fixed, iso_moving, fine_tuned_transform, fixed_modality=fixed_modality, moving_modality=moving_modality)
+    # moving_resampled = sitk.Resample(iso_moving, iso_fixed, fine_tuned_transform,
+    #                            sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
+    # mi = calc_mutual_information(iso_fixed, moving_resampled)
+    # print(f"{get_datetime()} Mutual information after fine-tuning: {mi:.4f}")
 
     # Rigid registration
     rigid_transform = perform_rigid_registration(
