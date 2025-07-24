@@ -128,3 +128,6 @@ def deprecated(reason):
             return func(*args, **kwargs)
         return wrapped
     return decorator
+
+def count_files(path):
+    return sum(1 for _ in os.scandir(path))
