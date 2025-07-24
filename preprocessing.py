@@ -114,6 +114,7 @@ def list_dicom_series(dir_path: str, imaging_only: bool = False) -> dict:
             }
         }
     """
+    print(f"{get_datetime()} Listing DICOM series in directory: {dir_path}")
     if not os.path.exists(dir_path):
         print(f"Directory does not exist: {dir_path}")
         return {}
