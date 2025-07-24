@@ -456,6 +456,8 @@ def main():
     last_moving_uid = None
 
     def on_register():
+        print(f"{get_datetime()} Starting registration process...")
+        start_time = time.time()
         nonlocal last_rigid_transform, last_fixed_uid, last_moving_uid
         register_status.config(text="\u23F3", fg="orange")
         root.update_idletasks()
@@ -524,13 +526,18 @@ def main():
                         copy_status.config(text="\u274C", fg="red")
                     finally:
                         register_progress.grid_remove()
+                end_time = time.time()
+                print(f"{get_datetime()} Registration took {end_time - start_time:.2f} seconds")
+                print(f"{get_datetime()} DONE\n")
+                on_get_images()
             else:
                 register_status.config(text="\u274C", fg="red")
+                end_time = time.time()
+                print(f"{get_datetime()} Registration took {end_time - start_time:.2f} seconds")
+                print(f"{get_datetime()} DONE\n")
         except Exception:
             register_status.config(text="\u274C", fg="red")
-        finally:
-            # refresh displayed series after cleanup
-            on_get_images()
+
 
     btn_register = tk.Button(root, text="Register", command=on_register)
     btn_register.grid(row=17, column=0, sticky="w", padx=10, pady=(0, 10))
