@@ -270,14 +270,57 @@ def main():
         try:
             rename_all_dicom_files(str(input_dir))
             wait_for_stable_imaging(str(input_dir))
-            imaging_series = list_dicom_series(str(input_dir), imaging_only=True)
-            for uid, info in imaging_series.items():
-                existing = find_rtstructs_for_series(str(input_dir), uid)
-                if not existing:
-                    create_empty_rtstruct(str(input_dir), uid, info["files"])
 
-            remove_orphan_rt_files(str(input_dir), set(imaging_series.keys()))
             series_info = list_dicom_series(str(input_dir))
+
+            imaging_uids = [
+                uid for uid, info in series_info.items()
+                if info.get("modality") not in ("RTSTRUCT", "REG")
+            ]
+
+            references = {}
+            for uid, info in series_info.items():
+                if info.get("modality") == "RTSTRUCT":
+                    for ref in info.get("references", []):
+                        references.setdefault(ref, []).append(uid)
+
+            for uid in imaging_uids:
+                if uid not in references:
+                    create_empty_rtstruct(str(input_dir), uid, series_info[uid]["files"])
+                    rs_path = os.path.join(str(input_dir), f"RS_{uid}.dcm")
+                    try:
+                        ds = pydicom.dcmread(rs_path, stop_before_pixels=True, force=True)
+                        new_uid = getattr(ds, "SeriesInstanceUID", None)
+                        date = getattr(ds, "SeriesDate", getattr(ds, "StudyDate", ""))
+                        time_str = getattr(ds, "SeriesTime", getattr(ds, "StudyTime", ""))
+                        desc = getattr(ds, "SeriesDescription", "").strip() or "<no description>"
+                        series_info[new_uid] = {
+                            "date": date,
+                            "time": time_str,
+                            "modality": "RTSTRUCT",
+                            "description": desc,
+                            "files": [rs_path],
+                            "references": [uid],
+                        }
+                        references.setdefault(uid, []).append(new_uid)
+                    except Exception:
+                        pass
+
+            valid_series = set(imaging_uids)
+            to_remove = []
+            for uid, info in series_info.items():
+                if info.get("modality") in ("RTSTRUCT", "REG"):
+                    refs = set(info.get("references", []))
+                    if refs and not (refs & valid_series):
+                        for fpath in info.get("files", []):
+                            try:
+                                os.remove(fpath)
+                            except Exception:
+                                pass
+                        to_remove.append(uid)
+
+            for uid in to_remove:
+                series_info.pop(uid, None)
 
             # Clear previous entries
             for widget in series_frame.winfo_children():
