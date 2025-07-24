@@ -264,31 +264,49 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
 def resample_ct(current_folder):
     """
     Main workflow:
-      1. Move DICOM files to a new folder named <folder>_original_CT.
-      2. Load original CT (SimpleITK).
-      3. Resample to new_spacing.
-      4. Save resampled CT as DICOM.
-      5. Reload and plot histogram comparison.
-      6. Delete the original folder.
+      1. Check the current image resolution. If the spacing is already
+         1.5x1.5x1.5 mm, don't perform the next steps.
+      2. Move DICOM files to a new folder named <folder>_original_CT.
+      3. Load original CT (SimpleITK).
+      4. Resample to new_spacing.
+      5. Save resampled CT as DICOM.
+      6. Delete the folder with the original CT.
     """
 
-    # Move the original CT to another folder
+    # Step 1: Check current spacing and skip resampling if already correct
+    print(f"{get_datetime()} Checking current CT resolution")
+    try:
+        current_CT = load_dicom_series(current_folder)
+    except FileNotFoundError:
+        print(f"{get_datetime()} No CT series found -> skipping resampling")
+        return
+
+    current_spacing = current_CT.GetSpacing()
+    print(f"Current CT spacing: {current_spacing}")
+
+    if all(abs(sp - 1.5) < 1e-3 for sp in current_spacing):
+        print(
+            f"{get_datetime()} CT already at 1.5x1.5x1.5 mm resolution -> no resampling"
+        )
+        return
+
+    # Step 2: Move the original CT to another folder
     print(f"{get_datetime()} Move the original CT to another folder")
     moved_original_CT_folder = move_original_ct(current_folder)
 
-    # Load the data in the folder where the exe is executed
+    # Step 3: Load the original CT from the moved folder
     print(f"{get_datetime()} Reading the original sCT")
     original_CT = load_dicom_series(moved_original_CT_folder)
 
-    # Resample to a user-defined resolution
+    # Step 4: Resample to a user-defined resolution
     print(f"{get_datetime()} Resampling to the 1.5x1.5x1.5 mm resolution")
     new_spacing = [1.5, 1.5, 1.5]  # in mm
     resampled_CT = resample_image_to_resolution(original_CT, new_spacing)
 
-    # Write the resampled CT to the subfolder
+    # Step 5: Write the resampled CT to the subfolder
     print(f"{get_datetime()} Saving the resampled sCT")
     save_resampled_image_as_dicom(resampled_CT, moved_original_CT_folder, current_folder)
 
-    # Delete the original CT to avoid problems
+    # Step 6: Delete the original CT to avoid problems
     print(f"{get_datetime()} Deleting the original CT")
     delete_folder(moved_original_CT_folder)
