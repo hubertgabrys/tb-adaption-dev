@@ -279,7 +279,7 @@ def resample_ct(current_folder):
         current_CT = load_dicom_series(current_folder)
     except FileNotFoundError:
         print(f"{get_datetime()} No CT series found -> skipping resampling")
-        return
+        return "aborted"
 
     current_spacing = current_CT.GetSpacing()
     print(f"Current CT spacing: {current_spacing}")
@@ -288,7 +288,7 @@ def resample_ct(current_folder):
         print(
             f"{get_datetime()} CT already at 1.5x1.5x1.5 mm resolution -> no resampling"
         )
-        return
+        return "aborted"
 
     # Step 2: Move the original CT to another folder
     print(f"{get_datetime()} Move the original CT to another folder")
@@ -310,3 +310,5 @@ def resample_ct(current_folder):
     # Step 6: Delete the original CT to avoid problems
     print(f"{get_datetime()} Deleting the original CT")
     delete_folder(moved_original_CT_folder)
+
+    return "success"
