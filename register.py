@@ -510,10 +510,12 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         moving_image, moving_files, used_moving_uid = read_dicom_series(moving_dir, moving_modality)
 
     # Cast & orient
+    print(f"{get_datetime()} Casting and reorienting images")
     fixed_image = sitk.Cast(sitk.DICOMOrient(fixed_image, 'LPS'), sitk.sitkFloat32)
     moving_image = sitk.Cast(sitk.DICOMOrient(moving_image, 'LPS'), sitk.sitkFloat32)
 
     # Crop the moving image around the beam isocenter if available
+    print(f"{get_datetime()} Cropping the moving image around the beam isocenter")
     try:
         moving_image = crop_image_to_isocenter(
             moving_image,
@@ -524,6 +526,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         print(f"{get_datetime()} Failed to crop moving image: {exc}")
 
     # Further crop the moving image based on the BODY contour if available
+    print(f"{get_datetime()} Cropping the moving image based on the BODY contour")
     try:
         moving_image = crop_image_to_body(
             moving_image,
@@ -542,26 +545,20 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     # except Exception as exc:
     #     print(f"{get_datetime()} Failed to crop fixed image by intensity: {exc}")
 
+    print(f"{get_datetime()} Extracting metadata from images")
     fixed_meta = extract_metadata(os.path.join(fixed_dir, os.path.basename(fixed_files[0])))
     moving_meta = extract_metadata(os.path.join(moving_dir, os.path.basename(moving_files[0])))
 
     # Resample both images to 1.5x1.5x1.5 mm
+    print(f"{get_datetime()} Resampling both images to 1.5x1.5x1.5 mm")
     iso_fixed = resample_to_isotropic(fixed_image, modality="MR", new_spacing=(1.5, 1.5, 1.5))
     iso_moving = resample_to_isotropic(moving_image, modality="CT", new_spacing=(1.5, 1.5, 1.5))
 
-    # Compute the min value of the fixed image
-    stats = sitk.StatisticsImageFilter()
-    stats.Execute(iso_fixed)
-    min_val_fixed = stats.GetMinimum()
     min_val_fixed = 0
-
-    # Compute the min value of the moving image
-    stats = sitk.StatisticsImageFilter()
-    stats.Execute(iso_moving)
-    min_val_moving = stats.GetMinimum()
     min_val_moving = -1024
 
     # Prealign
+    print(f"{get_datetime()} Prealigning both images")
     prealign_transform = perform_initial_registration(
         iso_fixed,
         iso_moving,
