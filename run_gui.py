@@ -389,14 +389,20 @@ def main():
     resample_status = tk.Label(root, text="", font=("Helvetica", 14))
 
     def on_resample():
+        print(f"{get_datetime()} Resampling sCT...")
+        start_time = time.time()
         resample_status.config(text="\u23F3", fg="orange")  # hourglass
         root.update_idletasks()
         try:
             if check_if_ct_present(str(input_dir)):
-                resample_ct(str(input_dir))
+                status = resample_ct(str(input_dir))
                 resample_status.config(text="\u2705", fg="green")
+                end_time = time.time()
+                print(f"{get_datetime()} Resampling took {end_time - start_time:.2f} seconds")
+                print(f"{get_datetime()} DONE\n")
                 # refresh series list after new sCT is generated
-                on_get_images()
+                if status == "success":
+                    on_get_images()
             else:
                 resample_status.config(text="\u274C", fg="red")
         except Exception:
