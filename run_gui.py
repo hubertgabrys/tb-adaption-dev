@@ -26,21 +26,34 @@ from copy_structures import copy_structures, _rtstruct_references_series
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import queue
+import gc
 
 
 class ConsoleRedirector:
-    """Redirect writes to a Tkinter text widget."""
+    """Redirect writes to a Tkinter text widget from any thread."""
 
     def __init__(self, widget):
         self.widget = widget
+        self.queue: queue.Queue[str] = queue.Queue()
+        self.widget.after(100, self._poll_queue)
 
-    def write(self, text):
-        self.widget.configure(state="normal")
-        self.widget.insert("end", text)
-        self.widget.see("end")
-        self.widget.configure(state="disabled")
+    def write(self, text: str) -> None:
+        """Thread-safe write that schedules GUI updates on the main thread."""
+        self.queue.put(text)
 
-    def flush(self):
+    def _poll_queue(self) -> None:
+        try:
+            while True:
+                text = self.queue.get_nowait()
+                self.widget.configure(state="normal")
+                self.widget.insert("end", text)
+                self.widget.see("end")
+                self.widget.configure(state="disabled")
+        except queue.Empty:
+            pass
+        self.widget.after(100, self._poll_queue)
+
+    def flush(self) -> None:
         pass
 
 
@@ -527,27 +540,70 @@ def main():
                     root.update_idletasks()
                     register_progress["value"] = 0
                     register_progress.grid()
-                    try:
-                        def progress_cb(idx, total):
-                            register_progress["maximum"] = total
-                            register_progress["value"] = idx
-                            root.update_idletasks()
+                    progress_q = queue.Queue()
+                    result = {"success": False, "error": None}
 
-                        copy_structures(
-                            str(input_dir),
-                            patient_id,
-                            rtplan_label,
-                            rigid_transform,
-                            series_uid=used_fixed_uid,
-                            base_series_uid=used_moving_uid,
-                            progress_callback=progress_cb,
-                        )
-                        copy_status.config(text="\u2705", fg="green")
-                    except Exception:
-                        copy_status.config(text="\u274C", fg="red")
-                    finally:
+                    def progress_cb(idx, total):
+                        progress_q.put((idx, total))
+
+                    gc_enabled = gc.isenabled()
+                    if gc_enabled:
+                        gc.disable()
+
+                    def worker():
+                        try:
+                            copy_structures(
+                                str(input_dir),
+                                patient_id,
+                                rtplan_label,
+                                rigid_transform,
+                                series_uid=used_fixed_uid,
+                                base_series_uid=used_moving_uid,
+                                progress_callback=progress_cb,
+                            )
+                            result["success"] = True
+                        except Exception as exc:
+                            result["error"] = exc
+                        finally:
+                            progress_q.put(None)
+
+                    thread = threading.Thread(target=worker, daemon=True)
+                    thread.start()
+
+                    def poll_queue():
+                        try:
+                            while True:
+                                item = progress_q.get_nowait()
+                                if item is None:
+                                    finish()
+                                    return
+                                idx, total = item
+                                register_progress["maximum"] = total
+                                register_progress["value"] = idx
+                        except queue.Empty:
+                            pass
+                        root.after(100, poll_queue)
+
+                    def finish():
                         register_progress.grid_remove()
-                on_get_images()
+                        if gc_enabled:
+                            gc.enable()
+                            gc.collect()
+                        if result.get("success"):
+                            copy_status.config(text="\u2705", fg="green")
+                        else:
+                            copy_status.config(text="\u274C", fg="red")
+                            err = result.get("error")
+                            if err:
+                                messagebox.showerror(
+                                    "Copy structures",
+                                    f"Failed to copy structures: {err}",
+                                )
+                        on_get_images()
+
+                    poll_queue()
+                else:
+                    on_get_images()
             else:
                 register_status.config(text="\u274C", fg="red")
         except Exception:
@@ -592,6 +648,10 @@ def main():
         def progress_cb(idx, total):
             progress_q.put((idx, total))
 
+        gc_enabled = gc.isenabled()
+        if gc_enabled:
+            gc.disable()
+
         def worker():
             try:
                 result["success"] = send_files_to_aria(
@@ -621,6 +681,9 @@ def main():
 
         def finish():
             send_progress.grid_remove()
+            if gc_enabled:
+                gc.enable()
+                gc.collect()
             end_time = time.time()
             if result.get("success"):
                 send_status.config(text="\u2705", fg="green")
