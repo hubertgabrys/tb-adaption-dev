@@ -50,9 +50,31 @@ def send_files_to_aria(filepaths, progress_callback=None):
         return False
 
     success = True
-    total = len(filepaths)
-    for idx, fpath in enumerate(filepaths, 1):
-        ds = pydicom.dcmread(fpath)
+
+    imaging = []
+    rtstruct = []
+    registration = []
+
+    for fpath in filepaths:
+        try:
+            ds = pydicom.dcmread(fpath)
+        except Exception as exc:
+            print(f"Failed to read file {fpath}: {exc}")
+            success = False
+            continue
+
+        modality = getattr(ds, "Modality", "")
+        if modality == "REG":
+            registration.append((ds, fpath))
+        elif modality == "RTSTRUCT":
+            rtstruct.append((ds, fpath))
+        else:
+            imaging.append((ds, fpath))
+
+    ordered = imaging + rtstruct + registration
+    total = len(ordered)
+
+    for idx, (ds, fpath) in enumerate(ordered, 1):
         status = send_file(assoc, ds)
         if status and status.Status == 0x0000:
             try:
