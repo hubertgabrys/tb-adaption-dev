@@ -278,9 +278,18 @@ def main():
             series_info = list_dicom_series(str(input_dir))
 
             imaging_uids = [
-                uid for uid, info in series_info.items()
+                uid
+                for uid, info in series_info.items()
                 if info.get("modality") not in ("RTSTRUCT", "REG")
             ]
+
+            registration_uids = [
+                uid
+                for uid, info in series_info.items()
+                if info.get("modality") == "REG"
+            ]
+
+            display_uids = imaging_uids + registration_uids
 
             references = {}
             for uid, info in series_info.items():
@@ -334,9 +343,9 @@ def main():
             series_vars.clear()
             checkbox_texts.clear()
 
-            tk.Label(series_frame, text="Imaging series available:").pack(anchor="w")
-            # Populate checkboxes for imaging series only
-            for uid in imaging_uids:
+            tk.Label(series_frame, text="Series available:").pack(anchor="w")
+            # Populate checkboxes for imaging and REG series
+            for uid in display_uids:
                 info = series_info[uid]
                 text = (
                     f"{info['date']} {info['time']} – {info['modality']} - {info['description']}"
