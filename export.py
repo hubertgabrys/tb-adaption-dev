@@ -2,12 +2,9 @@ import os
 import socket
 
 import pydicom
+from pydicom.uid import ImplicitVRLittleEndian
 from pynetdicom import AE
 from pynetdicom.sop_class import CTImageStorage, MRImageStorage, RTStructureSetStorage, Verification, SpatialRegistrationStorage
-from pydicom.uid import (
-    ExplicitVRLittleEndian, DeflatedExplicitVRLittleEndian, ImplicitVRLittleEndian
-)
-from tqdm import tqdm
 
 from utils import load_environment
 
@@ -19,14 +16,7 @@ SERVER_AE_TITLE = os.environ.get('SERVER_AE_TITLE')
 SERVER_IP = os.environ.get('SERVER_IP')
 SERVER_PORT = int(os.environ.get('SERVER_PORT'))
 
-ALLOWED_SERIES = [
-    'SyntheticCT HU',
-    'sCTp1-Dixon-HR_in',
-    't2_tse_tra',
-    'Spatial Registration (Rigid)',
-]
-
-TXS = [ExplicitVRLittleEndian, DeflatedExplicitVRLittleEndian, ImplicitVRLittleEndian]
+TXS = [ImplicitVRLittleEndian]
 
 SOPS = [
     CTImageStorage,
@@ -34,32 +24,6 @@ SOPS = [
     RTStructureSetStorage,
     SpatialRegistrationStorage
 ]
-
-def get_dicom_files(dir_path):
-    """
-    Retrieve and categorize DICOM files from a directory.
-    Returns lists of tuples (filepath, series_desc) for image and RTStruct files.
-    """
-    dicom_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith(".dcm")]
-    image_files = []
-    rtstruct_files = []
-    reg_files = []
-    for filepath in tqdm(dicom_files, desc="Identifying files to send"):
-        dataset = pydicom.dcmread(filepath, stop_before_pixels=True)
-        sop_class = dataset.SOPClassUID
-        series_desc = dataset.get("SeriesDescription", "")
-
-        if not any(allowed in series_desc for allowed in ALLOWED_SERIES):
-            continue
-
-        if sop_class in (CTImageStorage, MRImageStorage):
-            image_files.append((filepath, series_desc))
-        elif sop_class == RTStructureSetStorage:
-            rtstruct_files.append((filepath, series_desc))
-        elif sop_class == SpatialRegistrationStorage:
-            reg_files.append((filepath, series_desc))
-
-    return image_files, rtstruct_files, reg_files
 
 
 def send_file(assoc, ds):
@@ -73,12 +37,6 @@ def send_files_to_aria(filepaths, progress_callback=None):
 
     for sop in SOPS:
         ae.add_requested_context(sop, TXS)
-
-    # ae.add_requested_context(CTImageStorage)
-    # ae.add_requested_context(MRImageStorage)
-    # ae.add_requested_context(RTStructureSetStorage)
-    # ae.add_requested_context(SpatialRegistrationStorage)
-
     ae.add_requested_context(Verification)
 
     ae.maximum_pdu_size = 16 * 1024 * 1024
@@ -110,16 +68,3 @@ def send_files_to_aria(filepaths, progress_callback=None):
 
     assoc.release()
     return success
-
-
-def send2aria(dir_path):
-    """Send all allowed series in *dir_path* to the ARIA server."""
-    image_files, rtstruct_files, reg_files = get_dicom_files(dir_path)
-
-    filepaths = [
-        *(f for f, _ in image_files),
-        *(f for f, _ in rtstruct_files),
-        *(f for f, _ in reg_files),
-    ]
-
-    return send_files_to_aria(filepaths)
