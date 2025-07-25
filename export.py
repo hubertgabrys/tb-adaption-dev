@@ -4,6 +4,9 @@ import socket
 import pydicom
 from pynetdicom import AE
 from pynetdicom.sop_class import CTImageStorage, MRImageStorage, RTStructureSetStorage, Verification, SpatialRegistrationStorage
+from pydicom.uid import (
+    ExplicitVRLittleEndian, DeflatedExplicitVRLittleEndian, ImplicitVRLittleEndian
+)
 from tqdm import tqdm
 
 from utils import load_environment
@@ -23,6 +26,14 @@ ALLOWED_SERIES = [
     'Spatial Registration (Rigid)',
 ]
 
+TXS = [ExplicitVRLittleEndian, DeflatedExplicitVRLittleEndian, ImplicitVRLittleEndian]
+
+SOPS = [
+    CTImageStorage,
+    MRImageStorage,
+    RTStructureSetStorage,
+    SpatialRegistrationStorage
+]
 
 def get_dicom_files(dir_path):
     """
@@ -59,14 +70,21 @@ def send_file(assoc, ds):
 def send_files_to_aria(filepaths, progress_callback=None):
     """Send the DICOM *filepaths* to the ARIA server."""
     ae = AE(socket.gethostname())
-    ae.add_requested_context(CTImageStorage)
-    ae.add_requested_context(MRImageStorage)
-    ae.add_requested_context(RTStructureSetStorage)
+
+    for sop in SOPS:
+        ae.add_requested_context(sop, TXS)
+
+    # ae.add_requested_context(CTImageStorage)
+    # ae.add_requested_context(MRImageStorage)
+    # ae.add_requested_context(RTStructureSetStorage)
+    # ae.add_requested_context(SpatialRegistrationStorage)
+
     ae.add_requested_context(Verification)
-    ae.add_requested_context(SpatialRegistrationStorage)
-    ae.acse_timeout = 1200
-    ae.dimse_timeout = 1200
-    ae.network_timeout = 1200
+
+    ae.maximum_pdu_size = 16 * 1024 * 1024
+    ae.acse_timeout = 120
+    ae.dimse_timeout = 120
+    ae.network_timeout = 120
 
     assoc = ae.associate(SERVER_IP, SERVER_PORT, ae_title=SERVER_AE_TITLE)
     if not assoc.is_established:
@@ -80,7 +98,8 @@ def send_files_to_aria(filepaths, progress_callback=None):
         status = send_file(assoc, ds)
         if status and status.Status == 0x0000:
             try:
-                os.remove(fpath)
+                pass
+                # os.remove(fpath)
             except Exception:
                 pass
         else:
