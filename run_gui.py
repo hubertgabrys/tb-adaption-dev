@@ -29,18 +29,30 @@ import queue
 
 
 class ConsoleRedirector:
-    """Redirect writes to a Tkinter text widget."""
+    """Redirect writes to a Tkinter text widget from any thread."""
 
     def __init__(self, widget):
         self.widget = widget
+        self.queue: queue.Queue[str] = queue.Queue()
+        self.widget.after(100, self._poll_queue)
 
-    def write(self, text):
-        self.widget.configure(state="normal")
-        self.widget.insert("end", text)
-        self.widget.see("end")
-        self.widget.configure(state="disabled")
+    def write(self, text: str) -> None:
+        """Thread-safe write that schedules GUI updates on the main thread."""
+        self.queue.put(text)
 
-    def flush(self):
+    def _poll_queue(self) -> None:
+        try:
+            while True:
+                text = self.queue.get_nowait()
+                self.widget.configure(state="normal")
+                self.widget.insert("end", text)
+                self.widget.see("end")
+                self.widget.configure(state="disabled")
+        except queue.Empty:
+            pass
+        self.widget.after(100, self._poll_queue)
+
+    def flush(self) -> None:
         pass
 
 
