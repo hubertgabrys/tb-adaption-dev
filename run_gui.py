@@ -24,6 +24,8 @@ from utils import (
 from segmentation import create_empty_rtstruct
 from copy_structures import copy_structures, _rtstruct_references_series
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+import queue
 
 
 class ConsoleRedirector:
@@ -561,28 +563,57 @@ def main():
         root.update_idletasks()
         send_progress["value"] = 0
         send_progress.grid()
-        try:
-            def progress_cb(idx, total):
-                send_progress["maximum"] = total
-                send_progress["value"] = idx
-                root.update_idletasks()
+        progress_q = queue.Queue()
+        result = {"success": False, "error": None}
 
-            success = send_files_to_aria(selected_files, progress_callback=progress_cb)
-            if success:
+        def progress_cb(idx, total):
+            progress_q.put((idx, total))
+
+        def worker():
+            try:
+                result["success"] = send_files_to_aria(
+                    selected_files, progress_callback=progress_cb
+                )
+            except Exception as exc:
+                result["error"] = exc
+            finally:
+                progress_q.put(None)  # sentinel to signal completion
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+
+        def poll_queue():
+            try:
+                while True:
+                    item = progress_q.get_nowait()
+                    if item is None:
+                        finish()
+                        return
+                    idx, total = item
+                    send_progress["maximum"] = total
+                    send_progress["value"] = idx
+            except queue.Empty:
+                pass
+            root.after(100, poll_queue)
+
+        def finish():
+            send_progress.grid_remove()
+            end_time = time.time()
+            if result.get("success"):
                 send_status.config(text="\u2705", fg="green")
                 messagebox.showinfo("Send to Aria", "Files sent successfully.")
             else:
                 send_status.config(text="\u274C", fg="red")
-                messagebox.showerror("Send to Aria", "Some files failed to send.")
-        except Exception as exc:
-            send_status.config(text="\u274C", fg="red")
-            messagebox.showerror("Send to Aria", f"Failed to send files: {exc}")
-        finally:
-            send_progress.grid_remove()
-            end_time = time.time()
+                err = result.get("error")
+                if err:
+                    messagebox.showerror("Send to Aria", f"Failed to send files: {err}")
+                else:
+                    messagebox.showerror("Send to Aria", "Some files failed to send.")
             print(f"{get_datetime()} Sending finished in {end_time - start_time:.2f} seconds")
             print(f"{get_datetime()} DONE\n")
             on_get_images()
+
+        poll_queue()
 
     btn_send = tk.Button(root, text="Send to Aria", command=on_send_to_aria)
     btn_send.grid(row=20, column=0, sticky="w", padx=10, pady=(0, 10))
