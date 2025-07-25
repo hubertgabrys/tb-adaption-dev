@@ -45,6 +45,7 @@ def ct2id_prefix(comment):
 def mr2id_prefix(comment):
     """Return the prefix for MR based on the comment."""
     mr_prefix_map = {
+        "sCT_sp": "T2",
         "sCT": "DX",
         "t1_mprage": "T1M",
         "t1_space": "T1S",
@@ -71,6 +72,7 @@ def mr2id_prefix(comment):
 def mr2id_suffix(comment):
     """Return the suffix for MR based on the comment."""
     mr_suffix_map = {
+        "sp_Pel_T2": "_3D",
         "tra": "t",
         "cor": "c",
         "sag": "s",
