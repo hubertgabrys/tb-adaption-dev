@@ -15,6 +15,7 @@ from register import get_base_plan, perform_registration
 from tkinter import messagebox
 from tkinter import ttk
 from resampling import resample_ct
+from export import send_files_to_aria
 from utils import (
     load_environment,
     check_if_ct_present,
@@ -382,8 +383,8 @@ def main():
         on_get_images()
 
     btn_cleanup = tk.Button(root, text="Delete selected series", command=on_cleanup)
-    btn_cleanup.grid(row=20, column=0, sticky="w", padx=10, pady=(0, 10))
-    cleanup_status.grid(row=20, column=1, sticky="w")
+    btn_cleanup.grid(row=22, column=0, sticky="w", padx=10, pady=(0, 10))
+    cleanup_status.grid(row=22, column=1, sticky="w")
 
     # Resample button
     resample_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -391,7 +392,7 @@ def main():
     def on_resample():
         print(f"{get_datetime()} Resampling sCT...")
         start_time = time.time()
-        resample_status.config(text="\u23F3", fg="orange")  # hourglass
+        resample_status.config(text="\u23F3", fg="orange")
         root.update_idletasks()
         try:
             if check_if_ct_present(str(input_dir)):
@@ -456,8 +457,6 @@ def main():
     last_moving_uid = None
 
     def on_register():
-        print(f"{get_datetime()} Starting registration process...")
-        start_time = time.time()
         nonlocal last_rigid_transform, last_fixed_uid, last_moving_uid
         register_status.config(text="\u23F3", fg="orange")
         root.update_idletasks()
@@ -526,15 +525,9 @@ def main():
                         copy_status.config(text="\u274C", fg="red")
                     finally:
                         register_progress.grid_remove()
-                end_time = time.time()
-                print(f"{get_datetime()} Registration took {end_time - start_time:.2f} seconds")
-                print(f"{get_datetime()} DONE\n")
                 on_get_images()
             else:
                 register_status.config(text="\u274C", fg="red")
-                end_time = time.time()
-                print(f"{get_datetime()} Registration took {end_time - start_time:.2f} seconds")
-                print(f"{get_datetime()} DONE\n")
         except Exception:
             register_status.config(text="\u274C", fg="red")
 
@@ -548,6 +541,54 @@ def main():
 
     register_progress.grid(row=19, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
     register_progress.grid_remove()
+
+    send_status = tk.Label(root, text="", font=("Helvetica", 14))
+    send_progress = ttk.Progressbar(root, length=200, mode="determinate")
+
+    def on_send_to_aria():
+        print(f"{get_datetime()} Sending to Aria {input_dir}...")
+        start_time = time.time()
+        selected_files = []
+        for uid, var in series_vars.items():
+            if var.get():
+                info = series_info.get(uid, {})
+                selected_files.extend(info.get("files", []))
+        if not selected_files:
+            messagebox.showinfo("Send to Aria", "No series selected.")
+            return
+
+        send_status.config(text="\u23F3", fg="orange")
+        root.update_idletasks()
+        send_progress["value"] = 0
+        send_progress.grid()
+        try:
+            def progress_cb(idx, total):
+                send_progress["maximum"] = total
+                send_progress["value"] = idx
+                root.update_idletasks()
+
+            success = send_files_to_aria(selected_files, progress_callback=progress_cb)
+            if success:
+                send_status.config(text="\u2705", fg="green")
+                messagebox.showinfo("Send to Aria", "Files sent successfully.")
+            else:
+                send_status.config(text="\u274C", fg="red")
+                messagebox.showerror("Send to Aria", "Some files failed to send.")
+        except Exception as exc:
+            send_status.config(text="\u274C", fg="red")
+            messagebox.showerror("Send to Aria", f"Failed to send files: {exc}")
+        finally:
+            send_progress.grid_remove()
+            end_time = time.time()
+            print(f"{get_datetime()} Sending finished in {end_time - start_time:.2f} seconds")
+            print(f"{get_datetime()} DONE\n")
+            on_get_images()
+
+    btn_send = tk.Button(root, text="Send to Aria", command=on_send_to_aria)
+    btn_send.grid(row=20, column=0, sticky="w", padx=10, pady=(0, 10))
+    send_status.grid(row=20, column=1, sticky="w")
+    send_progress.grid(row=21, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    send_progress.grid_remove()
 
     def update_dropdown(*args):
         # show CT and MR series in the dropdown for the fixed image

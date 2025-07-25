@@ -1,6 +1,7 @@
 import datetime
 import os
 import socket
+import time
 from pathlib import Path
 
 import SimpleITK as sitk
@@ -387,7 +388,7 @@ def estimate_initial_transform_manual(fixed_image, moving_image):
 
     tx = sitk.TranslationTransform(3)
     tx.SetOffset(tuple(offset))
-    print(f"{get_datetime()} Initial transform: {offset}")
+    print(f"{get_datetime()} Initial transform: {[round(e,2) for e in offset]} mm")
     return tx
 
 def perform_initial_registration(fixed_image, moving_image):
@@ -396,7 +397,8 @@ def perform_initial_registration(fixed_image, moving_image):
         sitk.VersorRigid3DTransform(),
         sitk.CenteredTransformInitializerFilter.GEOMETRY
     )
-    print(f"{get_datetime()} Initial transform: {initial_tx.GetTranslation()}")
+    # print(f"{get_datetime()} Initial transform: {initial_tx.GetTranslation()}")
+    print(f"{get_datetime()} Initial transform: {[round(e,2) for e in initial_tx.GetTranslation()]} mm")
     return initial_tx
 
 def tune_initial_registration(
@@ -412,13 +414,12 @@ def tune_initial_registration(
         translationTx.SetOffset(transform.GetTranslation())
         registration_method = sitk.ImageRegistrationMethod()
         registration_method.SetMetricAsMattesMutualInformation(50)
-        registration_method.SetOptimizerAsExhaustive(numberOfSteps=[1, 1, 1], stepLength=30)
+        registration_method.SetOptimizerAsExhaustive(numberOfSteps=[2, 2, 1], stepLength=20)
         registration_method.SetInitialTransform(translationTx)
         registration_method.SetInterpolator(sitk.sitkLinear)
         auto_translation = registration_method.Execute(fixed_image, moving_image)
         transform.SetTranslation(auto_translation.GetOffset())
         print(f"{get_datetime()} Translation-only exhaustive done")
-        print(f"{get_datetime()} Optimal offset: {transform.GetTranslation()}")
         return transform
     elif mode == 'manual':
         shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(
@@ -502,6 +503,8 @@ def perform_registration(current_directory, patient_id, rtplan_label,
                          selected_series_uid=None, selected_modality=None,
                          moving_series_uid=None, moving_modality=None,
                          confirm_fn=None, manual_fine_tuning=True):
+    print(f"{get_datetime()} Starting registration process...")
+    start_time = time.time()
     fixed_dir = current_directory
     baseplan_dir = Path(os.environ.get('BASEPLAN_DIR'))
     moving_dir = baseplan_dir / patient_id / rtplan_label
@@ -524,7 +527,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
             fixed_image, fixed_files, used_fixed_uid = read_dicom_series(fixed_dir, "MR")
 
     series_desc = get_series_description(fixed_files[0])
-    pad_slices = 25 if series_desc.startswith("t2_tse_tra") else 0
+    pad_slices = 30 if series_desc.startswith("t2_tse_tra") else 0
     print(f"{get_datetime()} Reading moving image from:", moving_dir)
     if moving_series_uid:
         moving_modality = moving_modality or "CT"
@@ -622,7 +625,8 @@ def perform_registration(current_directory, patient_id, rtplan_label,
             fine_tuned_transform = prealign_transform
 
     # Fine-tuned prealignment
-    print(f"{get_datetime()} Fine-tuned transform: {fine_tuned_transform.GetTranslation()}")
+    # print(f"{get_datetime()} Fine-tuned transform: {fine_tuned_transform.GetTranslation()}")
+    print(f"{get_datetime()} Fine-tuned transform: {[round(e,2) for e in fine_tuned_transform.GetTranslation()]} mm")
     # moving_resampled = sitk.Resample(iso_moving, iso_fixed, fine_tuned_transform,
     #                            sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
     # mi = calc_mutual_information(iso_fixed, moving_resampled)
@@ -641,9 +645,15 @@ def perform_registration(current_directory, patient_id, rtplan_label,
 
     # Show images after registration
     translation = rigid_transform.GetNthTransform(0).GetTranslation()
-    print(f"Rigid translation: {translation}")
+    # print(f"Rigid translation: {translation}")
+    print(f"{get_datetime()} Final transform: {[round(e, 2) for e in translation]} mm")
     mi = calc_mutual_information(iso_fixed, moving_resampled)
-    print(f"{get_datetime()} Mutual information after rigid registration: {mi:.4f}")
+    # print(f"{get_datetime()} Mutual information after rigid registration: {mi:.4f}")
+
+    end_time = time.time()
+    print(f"{get_datetime()} Registration took {end_time - start_time:.2f} seconds")
+    print(f"{get_datetime()} DONE\n")
+
     run_viewer(
         iso_fixed,
         iso_moving, rigid_transform,
