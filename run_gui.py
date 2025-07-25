@@ -261,11 +261,12 @@ def main():
     series_info = {}
     series_vars = {}
     checkbox_texts = {}
+    references_map = {}
 
     def on_get_images():
         print(f"{get_datetime()} Getting images from {input_dir}...")
         start_time = time.time()
-        nonlocal series_info, series_vars, checkbox_texts
+        nonlocal series_info, series_vars, checkbox_texts, references_map
         images_status.config(text="\u23F3", fg="orange")  # hourglass
         root.update_idletasks()
         try:
@@ -323,6 +324,8 @@ def main():
             for uid in to_remove:
                 series_info.pop(uid, None)
 
+            references_map = references
+
             # Clear previous entries
             for widget in series_frame.winfo_children():
                 widget.destroy()
@@ -330,8 +333,9 @@ def main():
             checkbox_texts.clear()
 
             tk.Label(series_frame, text="Imaging series available:").pack(anchor="w")
-            # Populate checkboxes for each series
-            for uid, info in series_info.items():
+            # Populate checkboxes for imaging series only
+            for uid in imaging_uids:
+                info = series_info[uid]
                 text = (
                     f"{info['date']} {info['time']} – {info['modality']} - {info['description']}"
                     f" (files={len(info['files'])})"
@@ -376,6 +380,13 @@ def main():
                         os.remove(fpath)
                     except Exception:
                         pass
+                for rs_uid in references_map.get(uid, []):
+                    rs_info = series_info.get(rs_uid, {})
+                    for fpath in rs_info.get("files", []):
+                        try:
+                            os.remove(fpath)
+                        except Exception:
+                            pass
             cleanup_status.config(text="\u2705", fg="green")
         except Exception:
             cleanup_status.config(text="\u274C", fg="red")
@@ -553,6 +564,9 @@ def main():
             if var.get():
                 info = series_info.get(uid, {})
                 selected_files.extend(info.get("files", []))
+                for rs_uid in references_map.get(uid, []):
+                    rs_info = series_info.get(rs_uid, {})
+                    selected_files.extend(rs_info.get("files", []))
         if not selected_files:
             messagebox.showinfo("Send to Aria", "No series selected.")
             return
