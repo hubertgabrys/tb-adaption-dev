@@ -392,7 +392,7 @@ def main():
     def on_resample():
         print(f"{get_datetime()} Resampling sCT...")
         start_time = time.time()
-        resample_status.config(text="\u23F3", fg="orange")  # hourglass
+        resample_status.config(text="\u23F3", fg="orange")
         root.update_idletasks()
         try:
             if check_if_ct_present(str(input_dir)):
@@ -457,8 +457,6 @@ def main():
     last_moving_uid = None
 
     def on_register():
-        print(f"{get_datetime()} Starting registration process...")
-        start_time = time.time()
         nonlocal last_rigid_transform, last_fixed_uid, last_moving_uid
         register_status.config(text="\u23F3", fg="orange")
         root.update_idletasks()
@@ -527,15 +525,9 @@ def main():
                         copy_status.config(text="\u274C", fg="red")
                     finally:
                         register_progress.grid_remove()
-                end_time = time.time()
-                print(f"{get_datetime()} Registration took {end_time - start_time:.2f} seconds")
-                print(f"{get_datetime()} DONE\n")
                 on_get_images()
             else:
                 register_status.config(text="\u274C", fg="red")
-                end_time = time.time()
-                print(f"{get_datetime()} Registration took {end_time - start_time:.2f} seconds")
-                print(f"{get_datetime()} DONE\n")
         except Exception:
             register_status.config(text="\u274C", fg="red")
 
@@ -554,6 +546,8 @@ def main():
     send_progress = ttk.Progressbar(root, length=200, mode="determinate")
 
     def on_send_to_aria():
+        print(f"{get_datetime()} Sending to Aria {input_dir}...")
+        start_time = time.time()
         selected_files = []
         for uid, var in series_vars.items():
             if var.get():
@@ -585,6 +579,9 @@ def main():
             messagebox.showerror("Send to Aria", f"Failed to send files: {exc}")
         finally:
             send_progress.grid_remove()
+            end_time = time.time()
+            print(f"{get_datetime()} Sending finished in {end_time - start_time:.2f} seconds")
+            print(f"{get_datetime()} DONE\n")
             on_get_images()
 
     btn_send = tk.Button(root, text="Send to Aria", command=on_send_to_aria)
