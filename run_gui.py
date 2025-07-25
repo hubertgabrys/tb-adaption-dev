@@ -26,6 +26,7 @@ from copy_structures import copy_structures, _rtstruct_references_series
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import queue
+import gc
 
 
 class ConsoleRedirector:
@@ -545,6 +546,10 @@ def main():
                     def progress_cb(idx, total):
                         progress_q.put((idx, total))
 
+                    gc_enabled = gc.isenabled()
+                    if gc_enabled:
+                        gc.disable()
+
                     def worker():
                         try:
                             copy_structures(
@@ -581,6 +586,9 @@ def main():
 
                     def finish():
                         register_progress.grid_remove()
+                        if gc_enabled:
+                            gc.enable()
+                            gc.collect()
                         if result.get("success"):
                             copy_status.config(text="\u2705", fg="green")
                         else:
@@ -640,6 +648,10 @@ def main():
         def progress_cb(idx, total):
             progress_q.put((idx, total))
 
+        gc_enabled = gc.isenabled()
+        if gc_enabled:
+            gc.disable()
+
         def worker():
             try:
                 result["success"] = send_files_to_aria(
@@ -669,6 +681,9 @@ def main():
 
         def finish():
             send_progress.grid_remove()
+            if gc_enabled:
+                gc.enable()
+                gc.collect()
             end_time = time.time()
             if result.get("success"):
                 send_status.config(text="\u2705", fg="green")
