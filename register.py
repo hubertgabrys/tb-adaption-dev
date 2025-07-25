@@ -67,10 +67,10 @@ def read_dicom_series(directory, modality="CT", series_uid=None):
     # Set the search patterns based on modality.
     if modality == "CT":
         patterns = ["SyntheticCT HU", "Synthetic CT", ""]
-        print("Using CT for registration.")
+        # print("Using CT for registration.")
     elif modality == "MR":
         patterns = ["t2_tse_tra_warp", "t2_tse_tra"]
-        print("Using MR for registration.")
+        # print("Using MR for registration.")
     else:
         raise ValueError("Unsupported modality. Please choose 'CT' or 'MR'.")
 
@@ -1026,7 +1026,7 @@ class MultiViewOverlay:
         if lo == hi:
             lo = float(np.min(array))
             hi = float(np.max(array))
-        print(f"Low: {lo}, High: {hi}")
+        # print(f"Low: {lo}, High: {hi}")
         return float(lo), float(hi)
 
     def apply_colormap(self, image_slice, cmap, vmin, vmax):
