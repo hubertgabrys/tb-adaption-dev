@@ -7,6 +7,9 @@ from pynetdicom.sop_class import CTImageStorage, MRImageStorage, RTStructureSetS
 from tqdm import tqdm
 
 from utils import load_environment
+from concurrent.futures import ThreadPoolExecutor
+import math
+import threading
 
 # Load the .env
 load_environment(".env")
@@ -56,8 +59,7 @@ def send_file(assoc, ds):
     return status
 
 
-def send_files_to_aria(filepaths, progress_callback=None):
-    """Send the DICOM *filepaths* to the ARIA server."""
+def _send_subset(file_subset, lock, progress, total, progress_callback):
     ae = AE(socket.gethostname())
     ae.add_requested_context(CTImageStorage)
     ae.add_requested_context(MRImageStorage)
@@ -74,8 +76,7 @@ def send_files_to_aria(filepaths, progress_callback=None):
         return False
 
     success = True
-    total = len(filepaths)
-    for idx, fpath in enumerate(filepaths, 1):
+    for fpath in file_subset:
         ds = pydicom.dcmread(fpath)
         status = send_file(assoc, ds)
         if status and status.Status == 0x0000:
@@ -86,11 +87,38 @@ def send_files_to_aria(filepaths, progress_callback=None):
         else:
             print(f"Failed to send file: {fpath}")
             success = False
-        if progress_callback:
-            progress_callback(idx, total)
+        with lock:
+            progress[0] += 1
+            if progress_callback:
+                progress_callback(progress[0], total)
 
     assoc.release()
     return success
+
+
+def send_files_to_aria(filepaths, progress_callback=None, num_workers=4):
+    """Send the DICOM *filepaths* to the ARIA server using multiple associations."""
+
+    if num_workers < 1:
+        num_workers = 1
+
+    total = len(filepaths)
+    if total == 0:
+        return True
+
+    lock = threading.Lock()
+    progress = [0]
+    chunk_size = int(math.ceil(total / float(num_workers)))
+    subsets = [filepaths[i:i + chunk_size] for i in range(0, total, chunk_size)]
+
+    results = []
+    with ThreadPoolExecutor(max_workers=len(subsets)) as executor:
+        futures = [executor.submit(_send_subset, subset, lock, progress, total, progress_callback)
+                   for subset in subsets]
+        for fut in futures:
+            results.append(fut.result())
+
+    return all(results)
 
 
 def send2aria(dir_path):
