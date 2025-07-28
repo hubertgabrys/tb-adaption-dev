@@ -197,11 +197,16 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
         # ("0008|0070", get_dicom_value(original_CT_pydicom, Tag(0x00080070))),  # Manufacturer
         ("0008|1090", get_dicom_value(original_CT_pydicom, Tag(0x00081090))),  # Manufacturer model name
         ("0018|1000", get_dicom_value(original_CT_pydicom, Tag(0x00181000))),  # Device Serial Number
-        ("0008|0070", "Spectronic Medical AB / MIM Software"),  # Manufacturer
+        # ("0008|0070", "Spectronic Medical AB / MIM Software"),  # Manufacturer
         # ("0008|1090", "Freemax"),  # Manufacturer model name
         # ("0018|1000", "206207"),  # Device Serial Number
 
     ]
+
+    if get_dicom_value(original_CT_pydicom, Tag(0x00181000)) == "Spectronic Medical AB":
+        series_tag_values.append(("0008|0070", "Spectronic Medical AB / MIM Software"))
+    else:
+        series_tag_values.append(("0008|0070", get_dicom_value(original_CT_pydicom, Tag(0x00080070))))
 
     spacing_resampled = resampled_CT.GetSpacing()  # (spacing_x, spacing_y, spacing_z)
 
