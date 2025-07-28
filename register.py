@@ -422,6 +422,7 @@ def tune_initial_registration(
         print(f"{get_datetime()} Translation-only exhaustive done")
         return transform
     elif mode == 'manual':
+        print(f"{get_datetime()} Translation-only manual fine-tuning start")
         shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(
             fixed_image,
             moving_image,
@@ -447,6 +448,7 @@ def tune_initial_registration(
         )
         new_translation = np.array(transform.GetTranslation()) + np.array((shift_x_mm, shift_y_mm, shift_z_mm))
         transform.SetTranslation(new_translation)
+        print(f"{get_datetime()} Translation-only manual fine-tuning end")
         return transform
     else:
         return None
@@ -527,7 +529,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
             fixed_image, fixed_files, used_fixed_uid = read_dicom_series(fixed_dir, "MR")
 
     series_desc = get_series_description(fixed_files[0])
-    pad_slices = 30 if series_desc.startswith("t2_tse_tra") else 0
+    pad_slices = 30 if series_desc.endswith("t2_tse_tra") else 0
     print(f"{get_datetime()} Reading moving image from:", moving_dir)
     if moving_series_uid:
         moving_modality = moving_modality or "CT"
@@ -622,6 +624,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
                 pad_slices=pad_slices,
             )
         else:
+            print(f"{get_datetime()} No fine tuning needed.")
             fine_tuned_transform = prealign_transform
 
     # Fine-tuned prealignment
