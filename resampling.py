@@ -203,7 +203,7 @@ def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
 
     ]
 
-    if get_dicom_value(original_CT_pydicom, Tag(0x00181000)) == "Spectronic Medical AB":
+    if get_dicom_value(original_CT_pydicom, Tag(0x00080070)) == "Spectronic Medical AB":
         series_tag_values.append(("0008|0070", "Spectronic Medical AB / MIM Software"))
     else:
         series_tag_values.append(("0008|0070", get_dicom_value(original_CT_pydicom, Tag(0x00080070))))
