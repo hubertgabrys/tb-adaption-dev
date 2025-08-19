@@ -187,7 +187,7 @@ def _get_isocenter_from_rtplan(rtplan):
 
 
 def crop_image_to_isocenter(image, patient_id, rtplan_label, padding=50):
-    """Crop *image* to 30 slices above and below the RTPLAN isocenter."""
+    """Crop *image* to 50 slices above and below the RTPLAN isocenter."""
     rtplan = _read_base_rtplan(patient_id, rtplan_label)
     if rtplan is None:
         print(f"{get_datetime()} No RTPLAN found for cropping")
@@ -529,7 +529,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
             fixed_image, fixed_files, used_fixed_uid = read_dicom_series(fixed_dir, "MR")
 
     series_desc = get_series_description(fixed_files[0])
-    pad_slices = 30 if series_desc.endswith("t2_tse_tra") else 0
+    pad_slices = 30 if series_desc.endswith("t2_tse_tra_p4") else 0
     print(f"{get_datetime()} Reading moving image from:", moving_dir)
     if moving_series_uid:
         moving_modality = moving_modality or "CT"
