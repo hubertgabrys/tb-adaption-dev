@@ -78,10 +78,9 @@ def send_files_to_aria(filepaths, progress_callback=None):
         status = send_file(assoc, ds)
         if status and status.Status == 0x0000:
             try:
-                pass
-                # os.remove(fpath)
-            except Exception:
-                pass
+                os.remove(fpath)
+            except Exception as exc:
+                print(f"Failed to delete file {fpath}: {exc}")
         else:
             print(f"Failed to send file: {fpath}")
             success = False
