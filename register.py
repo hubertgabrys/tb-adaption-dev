@@ -69,7 +69,7 @@ def read_dicom_series(directory, modality="CT", series_uid=None):
         patterns = ["SyntheticCT HU", "Synthetic CT", ""]
         # print("Using CT for registration.")
     elif modality == "MR":
-        patterns = ["t2_tse_tra_warp", "t2_tse_tra"]
+        patterns = ["dixon_tra_Siemens_in", "t2_tse_tra_warp", "t2_tse_tra"]
         # print("Using MR for registration.")
     else:
         raise ValueError("Unsupported modality. Please choose 'CT' or 'MR'.")

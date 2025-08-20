@@ -695,6 +695,7 @@ def main():
                and (
                        info.get('description', '').startswith('t2_tse_tra')
                        or info.get('description', '').startswith('sCT_sp')
+                       or info.get('description', '').endswith('dixon_tra_Siemens_in')
                )
         ]
         for uid in filtered_uids:

@@ -47,6 +47,7 @@ def mr2id_prefix(comment):
     mr_prefix_map = {
         "sCT_sp": "T2",
         "sCT": "DX",
+        "t1_vibe_dixon": "DX",
         "t1_mprage": "T1M",
         "t1_space": "T1S",
         "t1": "T1",
@@ -73,6 +74,10 @@ def mr2id_suffix(comment):
     """Return the suffix for MR based on the comment."""
     mr_suffix_map = {
         "sp_Pel_T2": "_3D",
+        "Siemens_in": "in",
+        "Siemens_opp": "opp",
+        "Siemens_F": "F",
+        "Siemens_W": "W",
         "tra": "t",
         "cor": "c",
         "sag": "s",
