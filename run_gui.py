@@ -207,7 +207,7 @@ def main():
 
     # Console output widget
     console = ScrolledText(root, state="disabled", width=140)
-    console.grid(row=0, column=2, rowspan=18, sticky="nsew", padx=(10, 10), pady=10)
+    console.grid(row=0, column=2, rowspan=19, sticky="nsew", padx=(10, 10), pady=10)
 
     # Redirect stdout and stderr to the console widget
     sys.stdout = ConsoleRedirector(console)
@@ -287,6 +287,9 @@ def main():
         try:
             rename_all_dicom_files(str(input_dir))
             wait_for_stable_imaging(str(input_dir))
+            if check_if_ct_present(str(input_dir)):
+                print(f"{get_datetime()} Resampling sCT...")
+                resample_ct(str(input_dir))
 
             series_info = list_dicom_series(str(input_dir))
 
@@ -418,42 +421,15 @@ def main():
         on_get_images()
 
     btn_cleanup = tk.Button(root, text="Delete selected series", command=on_cleanup)
-    btn_cleanup.grid(row=22, column=0, sticky="w", padx=10, pady=(0, 10))
-    cleanup_status.grid(row=22, column=1, sticky="w")
-
-    # Resample button
-    resample_status = tk.Label(root, text="", font=("Helvetica", 14))
-
-    def on_resample():
-        print(f"{get_datetime()} Resampling sCT...")
-        start_time = time.time()
-        resample_status.config(text="\u23F3", fg="orange")
-        root.update_idletasks()
-        try:
-            if check_if_ct_present(str(input_dir)):
-                status = resample_ct(str(input_dir))
-                resample_status.config(text="\u2705", fg="green")
-                end_time = time.time()
-                print(f"{get_datetime()} Resampling took {end_time - start_time:.2f} seconds")
-                print(f"{get_datetime()} DONE\n")
-                # refresh series list after new sCT is generated
-                if status == "success":
-                    on_get_images()
-            else:
-                resample_status.config(text="\u274C", fg="red")
-        except Exception:
-            resample_status.config(text="\u274C", fg="red")
-
-    btn_resample = tk.Button(root, text="Resample sCT", command=on_resample)
-    btn_resample.grid(row=11, column=0, sticky="w", padx=10, pady=(0, 10))
-    resample_status.grid(row=11, column=1, sticky="w")
+    btn_cleanup.grid(row=18, column=0, sticky="w", padx=10, pady=(0, 10))
+    cleanup_status.grid(row=18, column=1, sticky="w")
 
     # Dropdown menu for registration series
     selected_var = tk.StringVar()
     selection_map = {}
-    tk.Label(root, text="Select Daily Series for Registration").grid(row=15, column=0, columnspan=2, sticky="w", padx=10)
+    tk.Label(root, text="Select Daily Series for Registration").grid(row=11, column=0, columnspan=2, sticky="w", padx=10)
     dropdown = tk.OptionMenu(root, selected_var, '')
-    dropdown.grid(row=16, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    dropdown.grid(row=12, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
     # Register button
     register_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -611,13 +587,13 @@ def main():
 
 
     btn_register = tk.Button(root, text="Register", command=on_register)
-    btn_register.grid(row=17, column=0, sticky="w", padx=10, pady=(0, 10))
-    register_status.grid(row=17, column=1, sticky="w")
+    btn_register.grid(row=13, column=0, sticky="w", padx=10, pady=(0, 10))
+    register_status.grid(row=13, column=1, sticky="w")
 
     copy_status = tk.Label(root, text="", font=("Helvetica", 14))
-    copy_status.grid(row=18, column=1, sticky="w")
+    copy_status.grid(row=14, column=1, sticky="w")
 
-    register_progress.grid(row=19, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    register_progress.grid(row=15, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
     register_progress.grid_remove()
 
     send_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -702,9 +678,9 @@ def main():
         poll_queue()
 
     btn_send = tk.Button(root, text="Send to Aria", command=on_send_to_aria)
-    btn_send.grid(row=20, column=0, sticky="w", padx=10, pady=(0, 10))
-    send_status.grid(row=20, column=1, sticky="w")
-    send_progress.grid(row=21, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    btn_send.grid(row=16, column=0, sticky="w", padx=10, pady=(0, 10))
+    send_status.grid(row=16, column=1, sticky="w")
+    send_progress.grid(row=17, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
     send_progress.grid_remove()
 
     def update_dropdown(*args):
