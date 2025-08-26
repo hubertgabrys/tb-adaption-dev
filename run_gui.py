@@ -424,11 +424,11 @@ def main():
         root,
         text="Delete selected series",
         command=on_cleanup,
-        bg="#ffdddd",
-        activebackground="#ffcccc",
+        bg="#ffbbbb",
+        activebackground="#ff9999",
     )
-    btn_cleanup.grid(row=18, column=0, sticky="w", padx=10, pady=(20, 10))
-    cleanup_status.grid(row=18, column=1, sticky="w", pady=(20, 10))
+    btn_cleanup.grid(row=18, column=0, sticky="w", padx=10, pady=(50, 10))
+    cleanup_status.grid(row=18, column=1, sticky="w", pady=(50, 10))
 
     # Dropdown menu for registration series
     selected_var = tk.StringVar()
