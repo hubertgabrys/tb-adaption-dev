@@ -420,7 +420,13 @@ def main():
         # refresh displayed series after cleanup
         on_get_images()
 
-    btn_cleanup = tk.Button(root, text="Delete selected series", command=on_cleanup)
+    btn_cleanup = tk.Button(
+        root,
+        text="Delete selected series",
+        command=on_cleanup,
+        bg="#ffdddd",
+        activebackground="#ffcccc",
+    )
     btn_cleanup.grid(row=18, column=0, sticky="w", padx=10, pady=(20, 10))
     cleanup_status.grid(row=18, column=1, sticky="w", pady=(20, 10))
 
