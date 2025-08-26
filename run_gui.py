@@ -277,11 +277,15 @@ def main():
     series_vars = {}
     checkbox_texts = {}
     references_map = {}
+    images_busy = False
 
     def on_get_images():
+        nonlocal series_info, series_vars, checkbox_texts, references_map, images_busy
+        if images_busy:
+            return
+        images_busy = True
         print(f"{get_datetime()} Getting images from {input_dir}...")
         start_time = time.time()
-        nonlocal series_info, series_vars, checkbox_texts, references_map
         images_status.config(text="\u23F3", fg="orange")  # hourglass
         root.update_idletasks()
         try:
@@ -381,6 +385,8 @@ def main():
             print(f"{get_datetime()} DONE\n")
         except Exception:
             images_status.config(text="\u274C", fg="red")
+        finally:
+            images_busy = False
 
     btn_images = tk.Button(root, text="Get imaging", command=on_get_images)
     btn_images.grid(row=5, column=0, sticky="w", padx=10, pady=(0, 5))
@@ -727,6 +733,23 @@ def main():
         else:
             bp_default_uid = None
             bp_default_modality = None
+
+    def watch_input_dir():
+        last_mtime = None
+        while True:
+            try:
+                mtime = os.path.getmtime(input_dir)
+                if last_mtime is None:
+                    last_mtime = mtime
+                elif mtime > last_mtime:
+                    last_mtime = mtime
+                    if not images_busy:
+                        root.after(0, on_get_images)
+            except Exception:
+                pass
+            time.sleep(5)
+
+    threading.Thread(target=watch_input_dir, daemon=True).start()
 
     root.mainloop()
 
