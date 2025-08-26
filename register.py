@@ -455,7 +455,13 @@ def tune_initial_registration(
 
 
 def perform_rigid_registration(fixed_image, moving_image, initial_transform):
-    """Perform rigid registration of two images."""
+    """Perform rigid registration of two images.
+
+    Returns
+    -------
+    (sitk.Transform, float)
+        The resulting transform and the final metric value.
+    """
     print(f"{get_datetime()} Initializing rigid registration...")
 
     # make a mask of “good” voxels in the fixed and moving images
@@ -496,9 +502,10 @@ def perform_rigid_registration(fixed_image, moving_image, initial_transform):
 
     print(f"{get_datetime()} Performing registration...")
     final_transform = registration_method.Execute(fixed_image, moving_image)
+    metric_value = registration_method.GetMetricValue()
     print(f"{get_datetime()} Registration completed.")
 
-    return final_transform
+    return final_transform, metric_value
 
 
 def perform_registration(current_directory, patient_id, rtplan_label,
@@ -636,7 +643,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     # print(f"{get_datetime()} Mutual information after fine-tuning: {mi:.4f}")
 
     # Rigid registration
-    rigid_transform = perform_rigid_registration(
+    rigid_transform, metric_value = perform_rigid_registration(
         iso_fixed,
         iso_moving,
         fine_tuned_transform,
@@ -651,7 +658,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     # print(f"Rigid translation: {translation}")
     print(f"{get_datetime()} Final transform: {[round(e, 2) for e in translation]} mm")
     mi = calc_mutual_information(iso_fixed, moving_resampled)
-    # print(f"{get_datetime()} Mutual information after rigid registration: {mi:.4f}")
+    print(f"{get_datetime()} Final metric value: {metric_value:.4f}")
 
     end_time = time.time()
     print(f"{get_datetime()} Registration took {end_time - start_time:.2f} seconds")
@@ -666,9 +673,10 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     )
 
     if confirm_fn is None:
-        registration_accepted = input("Registration accepted? (y/n): ") == "y"
+        prompt = f"Registration cost: {metric_value:.4f}. Accept? (y/n): "
+        registration_accepted = input(prompt) == "y"
     else:
-        registration_accepted = confirm_fn()
+        registration_accepted = confirm_fn(metric_value)
 
     if registration_accepted:
         print(f"{get_datetime()} Registration accepted")
@@ -676,10 +684,10 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         # so we pass rigid_transform as is.
         create_registration_file(output_reg_file, rigid_transform, fixed_meta, moving_meta,
                                  fixed_files, moving_files)
-        return rigid_transform, used_fixed_uid, used_moving_uid
+        return rigid_transform, metric_value, used_fixed_uid, used_moving_uid
     else:
         print(f"{get_datetime()} Registration rejected")
-        return None, None, None
+        return None, metric_value, None, None
 
 
 # --------------------------------------------------------------------
