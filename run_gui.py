@@ -473,8 +473,9 @@ def main():
         root.update_idletasks()
         try:
 
-            def confirm():
-                return messagebox.askyesno("Registration", "Accept registration result?")
+            def confirm(cost_value):
+                msg = f"Accept registration result?\nCost: {cost_value:.4f}"
+                return messagebox.askyesno("Registration", msg)
 
             # Determine which series the user selected in the dropdowns
             selected_label = selected_var.get()
@@ -491,7 +492,7 @@ def main():
                 return
 
             try:
-                rigid_transform, used_fixed_uid, used_moving_uid = perform_registration(
+                rigid_transform, _, used_fixed_uid, used_moving_uid = perform_registration(
                     str(input_dir),
                     patient_id,
                     rtplan_label,

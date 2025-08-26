@@ -95,10 +95,13 @@ def main():
     print()
     print(f"{get_datetime()} Performing registration".upper())
     try:
-        rigid_transform, fixed_uid, moving_uid = perform_registration(current_directory, patient_id, rtplan_label)
+        rigid_transform, metric_value, fixed_uid, moving_uid = perform_registration(
+            current_directory, patient_id, rtplan_label
+        )
+        print(f"{get_datetime()} Final registration cost: {metric_value:.4f}")
     except Exception:
         print(f"{get_datetime()} Registration failed")
-        rigid_transform, fixed_uid, moving_uid = None, None, None
+        rigid_transform, metric_value, fixed_uid, moving_uid = None, None, None, None
 
     # Step 5: Copy structures from the base plan to the new image
     print()
