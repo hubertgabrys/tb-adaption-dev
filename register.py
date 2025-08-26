@@ -31,7 +31,7 @@ from copy_structures import read_base_rtstruct
 load_environment(".env")
 configure_sitk_threads()
 
-LOG_FILE = Path(__file__).resolve().parent / "registration_log.csv"
+LOG_FILE = Path(r"\\raoariaapps\raoariaapps$\Utilities\tb_adaption\registration_log.csv")
 
 def _log_registration_entry(entry):
     """Append a registration entry to the CSV log."""
@@ -629,6 +629,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         iso_fixed,
         iso_moving,
     )
+    prealign_transform_translation = prealign_transform.GetTranslation()
 
     # Clamp intensities
     # iso_moving = sitk.Clamp(iso_moving, lowerBound=-160, upperBound=240)
@@ -637,7 +638,6 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     # print(f"{get_datetime()} Baseline mutual information: {mi:.4f}")
 
     # Fine-tuning
-    fine_tuned_transform = sitk.VersorRigid3DTransform(prealign_transform)
     if manual_fine_tuning:
         fine_tuned_transform = tune_initial_registration(
             fixed_image,
@@ -713,7 +713,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         "moving_series_description": get_series_description(moving_files[0]),
         "registration_type": "semi-automatic" if manual_fine_tuning else "automatic",
         "cost_function": metric_value,
-        "initial_transform": ",".join(f"{v:.2f}" for v in prealign_transform.GetTranslation()),
+        "initial_transform": ",".join(f"{v:.2f}" for v in prealign_transform_translation),
         "fine_tuned_transform": ",".join(f"{v:.2f}" for v in fine_tuned_transform.GetTranslation()),
         "final_transform": ",".join(
             f"{v:.2f}" for v in get_final_rigid_transform(rigid_transform).GetTranslation()
