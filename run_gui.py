@@ -511,75 +511,73 @@ def main():
                 last_moving_uid = used_moving_uid
                 register_status.config(text="\u2705", fg="green")
 
-                if messagebox.askyesno("Copy structures", "Copy structures now?"):
-                    copy_status.config(text="\u23F3", fg="orange")
-                    root.update_idletasks()
-                    register_progress["value"] = 0
-                    register_progress.grid()
-                    progress_q = queue.Queue()
-                    result = {"success": False, "error": None}
+                copy_status.config(text="\u23F3", fg="orange")
+                root.update_idletasks()
+                register_progress["value"] = 0
+                register_progress.grid()
+                progress_q = queue.Queue()
+                result = {"success": False, "error": None}
 
-                    def progress_cb(idx, total):
-                        progress_q.put((idx, total))
+                def progress_cb(idx, total):
+                    progress_q.put((idx, total))
 
-                    gc_enabled = gc.isenabled()
+                gc_enabled = gc.isenabled()
+                if gc_enabled:
+                    gc.disable()
+
+                def worker():
+                    try:
+                        print(f"{get_datetime()} Copying the structures...")
+                        copy_structures(
+                            str(input_dir),
+                            patient_id,
+                            rtplan_label,
+                            rigid_transform,
+                            series_uid=used_fixed_uid,
+                            base_series_uid=used_moving_uid,
+                            progress_callback=progress_cb,
+                        )
+                        result["success"] = True
+                    except Exception as exc:
+                        result["error"] = exc
+                    finally:
+                        progress_q.put(None)
+
+                thread = threading.Thread(target=worker, daemon=True)
+                thread.start()
+
+                def poll_queue():
+                    try:
+                        while True:
+                            item = progress_q.get_nowait()
+                            if item is None:
+                                finish()
+                                return
+                            idx, total = item
+                            register_progress["maximum"] = total
+                            register_progress["value"] = idx
+                    except queue.Empty:
+                        pass
+                    root.after(100, poll_queue)
+
+                def finish():
+                    register_progress.grid_remove()
                     if gc_enabled:
-                        gc.disable()
-
-                    def worker():
-                        try:
-                            copy_structures(
-                                str(input_dir),
-                                patient_id,
-                                rtplan_label,
-                                rigid_transform,
-                                series_uid=used_fixed_uid,
-                                base_series_uid=used_moving_uid,
-                                progress_callback=progress_cb,
+                        gc.enable()
+                        gc.collect()
+                    if result.get("success"):
+                        copy_status.config(text="\u2705", fg="green")
+                    else:
+                        copy_status.config(text="\u274C", fg="red")
+                        err = result.get("error")
+                        if err:
+                            messagebox.showerror(
+                                "Copy structures",
+                                f"Failed to copy structures: {err}",
                             )
-                            result["success"] = True
-                        except Exception as exc:
-                            result["error"] = exc
-                        finally:
-                            progress_q.put(None)
-
-                    thread = threading.Thread(target=worker, daemon=True)
-                    thread.start()
-
-                    def poll_queue():
-                        try:
-                            while True:
-                                item = progress_q.get_nowait()
-                                if item is None:
-                                    finish()
-                                    return
-                                idx, total = item
-                                register_progress["maximum"] = total
-                                register_progress["value"] = idx
-                        except queue.Empty:
-                            pass
-                        root.after(100, poll_queue)
-
-                    def finish():
-                        register_progress.grid_remove()
-                        if gc_enabled:
-                            gc.enable()
-                            gc.collect()
-                        if result.get("success"):
-                            copy_status.config(text="\u2705", fg="green")
-                        else:
-                            copy_status.config(text="\u274C", fg="red")
-                            err = result.get("error")
-                            if err:
-                                messagebox.showerror(
-                                    "Copy structures",
-                                    f"Failed to copy structures: {err}",
-                                )
-                        on_get_images()
-
-                    poll_queue()
-                else:
                     on_get_images()
+
+                poll_queue()
             else:
                 register_status.config(text="\u274C", fg="red")
         except Exception:
