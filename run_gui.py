@@ -551,6 +551,7 @@ def main():
 
                 def worker():
                     try:
+                        print(f"{get_datetime()} Copying the structures...")
                         copy_structures(
                             str(input_dir),
                             patient_id,
