@@ -547,7 +547,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
 
     print(f"{get_datetime()} Reading fixed image from:", fixed_dir)
     if selected_series_uid:
-        fixed_modality = selected_modality or "CT"
+        fixed_modality = (selected_modality or "CT").upper()
         fixed_image, fixed_files, used_fixed_uid = read_dicom_series(
             fixed_dir,
             modality=fixed_modality,
@@ -565,14 +565,14 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     pad_slices = 30 if series_desc.endswith("t2_tse_tra_p4") else 0
     print(f"{get_datetime()} Reading moving image from:", moving_dir)
     if moving_series_uid:
-        moving_modality = moving_modality or "CT"
+        moving_modality = (moving_modality or "CT").upper()
         moving_image, moving_files, used_moving_uid = read_dicom_series(
             moving_dir,
             modality=moving_modality,
             series_uid=moving_series_uid,
         )
     else:
-        moving_modality = moving_modality or "CT"
+        moving_modality = (moving_modality or "CT").upper()
         moving_image, moving_files, used_moving_uid = read_dicom_series(moving_dir, moving_modality)
 
     # Cast & orient
@@ -617,11 +617,19 @@ def perform_registration(current_directory, patient_id, rtplan_label,
 
     # Resample both images to 1.5x1.5x1.5 mm
     print(f"{get_datetime()} Resampling both images to 1.5x1.5x1.5 mm")
-    iso_fixed = resample_to_isotropic(fixed_image, modality="MR", new_spacing=(1.5, 1.5, 1.5))
-    iso_moving = resample_to_isotropic(moving_image, modality="CT", new_spacing=(1.5, 1.5, 1.5))
+    iso_fixed = resample_to_isotropic(
+        fixed_image,
+        modality=fixed_modality,
+        new_spacing=(1.5, 1.5, 1.5),
+    )
+    iso_moving = resample_to_isotropic(
+        moving_image,
+        modality=moving_modality,
+        new_spacing=(1.5, 1.5, 1.5),
+    )
 
-    min_val_fixed = 0
-    min_val_moving = -1024
+    min_val_fixed = -1024 if fixed_modality == "CT" else 0
+    min_val_moving = -1024 if moving_modality == "CT" else 0
 
     # Prealign
     print(f"{get_datetime()} Prealigning both images")
