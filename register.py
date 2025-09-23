@@ -54,8 +54,25 @@ configure_sitk_threads()
 LOG_FILE = Path(r"\\raoariaapps\raoariaapps$\Utilities\tb_adaption\registration_log.csv")
 
 
+LOG_HEADERS = [
+    "patient_id",
+    "rtplan_label",
+    "timestamp",
+    "fixed_series_description",
+    "moving_series_description",
+    "registration_type",
+    "cost_function",
+    "normalized_mutual_information",
+    "initial_transform",
+    "fine_tuned_transform",
+    "final_transform",
+    "duration_seconds",
+    "accepted",
+]
+
+
 def _ensure_log_schema():
-    """Ensure the registration log has the expected columns."""
+    """Ensure the registration log uses the expected columns."""
 
     if not LOG_FILE.exists():
         return
@@ -70,22 +87,19 @@ def _ensure_log_schema():
     except OSError:
         return
 
-    added = False
-    for column in ("normalized_cost_function", "normalized_mutual_information"):
-        if column not in fieldnames:
-            fieldnames.append(column)
-            added = True
-            for row in rows:
-                row.setdefault(column, "")
-
-    if not added:
+    if fieldnames == LOG_HEADERS:
         return
+
+    normalized_rows = []
+    for row in rows:
+        normalized_row = {header: row.get(header, "") for header in LOG_HEADERS}
+        normalized_rows.append(normalized_row)
 
     try:
         with LOG_FILE.open("w", newline="") as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer = csv.DictWriter(csvfile, fieldnames=LOG_HEADERS)
             writer.writeheader()
-            writer.writerows(rows)
+            writer.writerows(normalized_rows)
     except OSError:
         # If updating the schema fails we fall back to the existing file.
         pass
@@ -101,7 +115,6 @@ def _load_series_cost_history(series_description):
         with LOG_FILE.open("r", newline="") as csvfile:
             reader = csv.DictReader(csvfile)
             normalized_values = []
-            legacy_values = []
             for row in reader:
                 desc = row.get("fixed_series_description", "").strip().lower()
                 if not desc or desc != series_description:
@@ -110,17 +123,9 @@ def _load_series_cost_history(series_description):
                     normalized = row.get("normalized_mutual_information")
                     if normalized not in (None, ""):
                         normalized_values.append(float(normalized))
-                        continue
-                    legacy_normalized = row.get("normalized_cost_function")
-                    if legacy_normalized not in (None, ""):
-                        normalized_values.append(float(legacy_normalized))
-                        continue
-                    legacy = row.get("cost_function", "")
-                    if legacy != "":
-                        legacy_values.append(float(legacy))
                 except (TypeError, ValueError):
                     continue
-            return normalized_values or legacy_values
+            return normalized_values
     except OSError:
         return []
 
@@ -131,19 +136,7 @@ def _compute_top_percentile(metric_value, historical_values):
     if not historical_values:
         return None
 
-    positives = [value for value in historical_values if value >= 0]
-    negatives = [value for value in historical_values if value < 0]
-
-    if metric_value >= 0:
-        if negatives:
-            # Mixed scales – cannot compare normalized to legacy values.
-            return None
-        sorted_values = sorted(historical_values + [metric_value], reverse=True)
-    else:
-        if positives:
-            return None
-        sorted_values = sorted(historical_values + [metric_value])
-
+    sorted_values = sorted(historical_values + [metric_value], reverse=True)
     rank = sorted_values.index(metric_value) + 1  # 1-based rank
     percentile = 100 * rank / len(sorted_values)
     return percentile
@@ -151,25 +144,9 @@ def _compute_top_percentile(metric_value, historical_values):
 def _log_registration_entry(entry):
     """Append a registration entry to the CSV log."""
     _ensure_log_schema()
-    headers = [
-        "patient_id",
-        "rtplan_label",
-        "timestamp",
-        "fixed_series_description",
-        "moving_series_description",
-        "registration_type",
-        "cost_function",
-        "normalized_cost_function",
-        "normalized_mutual_information",
-        "initial_transform",
-        "fine_tuned_transform",
-        "final_transform",
-        "duration_seconds",
-        "accepted",
-    ]
     file_exists = LOG_FILE.exists()
     with LOG_FILE.open("a", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=headers)
+        writer = csv.DictWriter(csvfile, fieldnames=LOG_HEADERS)
         if not file_exists:
             writer.writeheader()
         writer.writerow(entry)
@@ -848,12 +825,6 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         quality_line = (
             f"Quality: {stars} (top {percentile:.1f}% historically)"
         )
-    elif historical_costs:
-        stars = EMPTY_STAR * 5
-        quality_line = (
-            "Quality: "
-            f"{stars} (legacy metric history – percentile unavailable)"
-        )
     else:
         stars = EMPTY_STAR * 5
         quality_line = f"Quality: {stars} (no historical data)"
@@ -894,7 +865,6 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         "moving_series_description": moving_series_description,
         "registration_type": "semi-automatic" if manual_fine_tuning else "automatic",
         "cost_function": registration_metric_value,
-        "normalized_cost_function": "",
         "normalized_mutual_information": normalized_metric_value,
         "initial_transform": ",".join(f"{v:.2f}" for v in prealign_transform_translation),
         "fine_tuned_transform": ",".join(f"{v:.2f}" for v in fine_tuned_transform.GetTranslation()),
