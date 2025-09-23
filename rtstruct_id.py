@@ -1,6 +1,9 @@
 from datetime import datetime
 
 
+FALLBACK_DATE_STR = "unknown"
+
+
 def create_rtstruct_id(meta_data):
     """Generate a proposed ID based on the image modality and metadata."""
     modality = getattr(meta_data, "Modality", "")
@@ -90,8 +93,29 @@ def mr2id_suffix(comment):
 
 
 def datetime2yymmdd(date_str):
-    """Convert a datetime string to YY-MM-DD format."""
-    formatted_date = datetime.strptime(date_str, "%Y%m%d").strftime("%y-%m-%d")
-    # if len(in_datetime) >= 10:
-    #     return f"{in_datetime[8:10]}-{in_datetime[3:5]}-{in_datetime[0:2]}"
-    return datetime.strptime(date_str, "%Y%m%d").strftime("%y-%m-%d")
+    """Convert a datetime string to YY-MM-DD format.
+
+    Returns
+    -------
+    str
+        A string in the format ``YY-MM-DD`` if ``date_str`` can be parsed,
+        otherwise :data:`FALLBACK_DATE_STR`.
+    """
+
+    if isinstance(date_str, datetime):
+        return date_str.strftime("%y-%m-%d")
+
+    try:
+        cleaned = str(date_str).strip()
+    except Exception:
+        return FALLBACK_DATE_STR
+
+    if not cleaned:
+        return FALLBACK_DATE_STR
+
+    try:
+        parsed = datetime.strptime(cleaned, "%Y%m%d")
+    except (TypeError, ValueError):
+        return FALLBACK_DATE_STR
+
+    return parsed.strftime("%y-%m-%d")
