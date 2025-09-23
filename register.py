@@ -24,6 +24,26 @@ from utils import (
 )
 from copy_structures import read_base_rtstruct
 
+FULL_STAR = "\u2605"  # ★
+EMPTY_STAR = "\u2606"  # ☆
+
+
+def star_rating(percent: float, max_stars: int = 5, mode: str = "nearest") -> str:
+    """Return a star rating string for *percent* quality."""
+
+    percent = max(0.0, min(100.0, percent))
+    stars = percent / 100.0 * max_stars
+
+    if mode == "nearest":
+        full = round(stars)
+    elif mode == "floor":
+        full = int(stars)
+    else:
+        raise ValueError("mode must be 'nearest' or 'floor'")
+
+    empty = max_stars - full
+    return FULL_STAR * full + EMPTY_STAR * empty
+
 # --------------------------------------------------------------------
 # Helper functions
 # --------------------------------------------------------------------
@@ -737,6 +757,18 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     print(f"{get_datetime()} Final transform: {[round(e, 2) for e in translation]} mm")
     print(f"{get_datetime()} Final metric value: {metric_value:.4f}")
 
+    historical_costs = _load_series_cost_history(fixed_series_description)
+    percentile = _compute_top_percentile(metric_value, historical_costs)
+    if percentile is not None:
+        quality_percent = 100.0 - percentile
+        stars = star_rating(quality_percent)
+        quality_line = (
+            f"Quality: {stars} (top {percentile:.1f}% historically)"
+        )
+    else:
+        stars = EMPTY_STAR * 5
+        quality_line = f"Quality: {stars} (no historical data)"
+
     end_time = time.time()
     duration = end_time - start_time
     print(f"{get_datetime()} Registration took {duration:.2f} seconds")
@@ -748,23 +780,22 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         fixed_modality=fixed_modality,
         moving_modality=moving_modality,
         pad_slices=pad_slices,
+        metric_value=metric_value,
+        quality_text=quality_line,
     )
 
-    historical_costs = _load_series_cost_history(fixed_series_description)
-    percentile = _compute_top_percentile(metric_value, historical_costs)
     prompt_lines = [
         "Accept registration result?",
         f"Cost: {metric_value:.4f}",
+        quality_line,
     ]
-    if percentile is not None:
-        prompt_lines.append(f"Top {percentile:.1f}% of registrations")
     prompt_lines.append("Accept? (y/n): ")
     prompt = "\n".join(prompt_lines)
 
     if confirm_fn is None:
         registration_accepted = input(prompt) == "y"
     else:
-        registration_accepted = confirm_fn(metric_value, percentile)
+        registration_accepted = confirm_fn(metric_value, quality_line)
 
     log_entry = {
         "patient_id": patient_id,
@@ -1133,6 +1164,9 @@ class MultiViewOverlay:
         self.slider_shift_z.on_changed(self.update_shift_z)
 
         self.fig.canvas.mpl_connect('scroll_event', self.on_scroll)
+
+    def show(self):
+        """Display the viewer window."""
         plt.show()
 
     def _compute_range(self, array, modality):
@@ -1281,6 +1315,8 @@ def run_viewer(
     fixed_modality="MR",
     moving_modality="CT",
     pad_slices=0,
+    metric_value=None,
+    quality_text=None,
 ):
     """Display fixed and moving images with optional padding of the fixed image."""
     if pad_slices > 0:
@@ -1314,4 +1350,12 @@ def run_viewer(
         fixed_modality=fixed_modality,
         moving_modality=moving_modality,
     )
+    info_parts: list[str] = []
+    if metric_value is not None:
+        info_parts.append(f"Cost: {metric_value:.4f}")
+    if quality_text:
+        info_parts.append(quality_text)
+    if info_parts:
+        overlay.fig.suptitle(" | ".join(info_parts), fontsize=14)
+    overlay.show()
     return overlay.shift_z, overlay.shift_y, overlay.shift_x

@@ -479,12 +479,10 @@ def main():
         root.update_idletasks()
         try:
 
-            def confirm(cost_value, percentile):
+            def confirm(cost_value, quality_line):
                 details = [f"Cost: {cost_value:.4f}"]
-                if percentile is not None:
-                    details.append(
-                        f"Top {percentile:.1f}% of registrations"
-                    )
+                if quality_line:
+                    details.append(quality_line)
                 msg = "Accept registration result?\n" + "\n".join(details)
                 return messagebox.askyesno("Registration", msg)
 
