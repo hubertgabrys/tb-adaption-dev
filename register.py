@@ -540,10 +540,11 @@ def perform_registration(current_directory, patient_id, rtplan_label,
                          confirm_fn=None, manual_fine_tuning=True):
     print(f"{get_datetime()} Starting registration process...")
     start_time = time.time()
+    current_directory = Path(current_directory)
     fixed_dir = current_directory
     baseplan_dir = Path(os.environ.get('BASEPLAN_DIR'))
     moving_dir = baseplan_dir / patient_id / rtplan_label
-    output_reg_file = current_directory + "\\REG.dcm"
+    output_reg_file = current_directory / "REG.dcm"
 
     print(f"{get_datetime()} Reading fixed image from:", fixed_dir)
     if selected_series_uid:
@@ -612,8 +613,8 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     #     print(f"{get_datetime()} Failed to crop fixed image by intensity: {exc}")
 
     print(f"{get_datetime()} Extracting metadata from images")
-    fixed_meta = extract_metadata(os.path.join(fixed_dir, os.path.basename(fixed_files[0])))
-    moving_meta = extract_metadata(os.path.join(moving_dir, os.path.basename(moving_files[0])))
+    fixed_meta = extract_metadata(fixed_dir / os.path.basename(fixed_files[0]))
+    moving_meta = extract_metadata(moving_dir / os.path.basename(moving_files[0]))
 
     # Resample both images to 1.5x1.5x1.5 mm
     print(f"{get_datetime()} Resampling both images to 1.5x1.5x1.5 mm")
