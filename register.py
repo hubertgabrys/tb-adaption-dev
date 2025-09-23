@@ -54,6 +54,45 @@ configure_sitk_threads()
 LOG_FILE = Path(r"\\raoariaapps\raoariaapps$\Utilities\tb_adaption\registration_log.csv")
 
 
+def _extract_largest_component(mask: sitk.Image) -> sitk.Image:
+    """Return a binary mask containing only the largest connected component."""
+
+    connected = sitk.ConnectedComponent(mask)
+    stats = sitk.LabelShapeStatisticsImageFilter()
+    stats.Execute(connected)
+    labels = stats.GetLabels()
+    if not labels:
+        return mask * 0
+    largest_label = max(labels, key=stats.GetPhysicalSize)
+    return sitk.BinaryThreshold(connected, lowerThreshold=largest_label, upperThreshold=largest_label, insideValue=1, outsideValue=0)
+
+
+def create_ct_body_mask(image: sitk.Image) -> sitk.Image:
+    """Create a robust body mask for CT images."""
+
+    mask = sitk.BinaryThreshold(
+        image,
+        lowerThreshold=-300,
+        upperThreshold=10_000,
+        insideValue=1,
+        outsideValue=0,
+    )
+    mask = sitk.Cast(mask, sitk.sitkUInt8)
+    mask = sitk.BinaryFillhole(mask, fullyConnected=True)
+    return _extract_largest_component(mask)
+
+
+def create_mr_body_mask(image: sitk.Image) -> sitk.Image:
+    """Create a robust body mask for MR images."""
+
+    smoothed = sitk.DiscreteGaussian(image, variance=1.0)
+    mask = sitk.OtsuThreshold(smoothed, insideValue=0, outsideValue=1)
+    mask = sitk.Cast(mask, sitk.sitkUInt8)
+    mask = sitk.BinaryMorphologicalClosing(mask, [2, 2, 2])
+    mask = sitk.BinaryFillhole(mask, fullyConnected=True)
+    return _extract_largest_component(mask)
+
+
 LOG_HEADERS = [
     "patient_id",
     "rtplan_label",
@@ -592,7 +631,13 @@ def tune_initial_registration(
         return None
 
 
-def perform_rigid_registration(fixed_image, moving_image, initial_transform):
+def perform_rigid_registration(
+    fixed_image,
+    moving_image,
+    initial_transform,
+    fixed_modality="CT",
+    moving_modality="CT",
+):
     """Perform rigid registration of two images.
 
     Returns
@@ -603,23 +648,25 @@ def perform_rigid_registration(fixed_image, moving_image, initial_transform):
     print(f"{get_datetime()} Initializing rigid registration...")
 
     # make a mask of “good” voxels in the fixed and moving images
-    fixed_mask = sitk.BinaryThreshold(fixed_image,
-                                      lowerThreshold=100,
-                                      upperThreshold=1100,
-                                      insideValue=1,
-                                      outsideValue=0)
+    fixed_mask = None
+    if fixed_modality == "CT":
+        fixed_mask = create_ct_body_mask(fixed_image)
+    elif fixed_modality == "MR":
+        fixed_mask = create_mr_body_mask(fixed_image)
 
-    moving_mask = sitk.BinaryThreshold(moving_image,
-                                       lowerThreshold=-140,
-                                       upperThreshold=360,
-                                       insideValue=1,
-                                       outsideValue=0)
+    moving_mask = None
+    if moving_modality == "CT":
+        moving_mask = create_ct_body_mask(moving_image)
+    elif moving_modality == "MR":
+        moving_mask = create_mr_body_mask(moving_image)
 
     # set up the registration method
     registration_method = sitk.ImageRegistrationMethod()
     registration_method.SetMetricAsMattesMutualInformation(50)
-    # registration_method.SetMetricFixedMask(fixed_mask)
-    # registration_method.SetMetricMovingMask(moving_mask)
+    if fixed_mask is not None:
+        registration_method.SetMetricFixedMask(fixed_mask)
+    if moving_mask is not None:
+        registration_method.SetMetricMovingMask(moving_mask)
     registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
     registration_method.SetMetricSamplingPercentage(0.1, seed=42)
     registration_method.SetInterpolator(sitk.sitkLinear)
@@ -799,6 +846,8 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         iso_fixed,
         iso_moving,
         fine_tuned_transform,
+        fixed_modality=fixed_modality,
+        moving_modality=moving_modality,
     )
 
     # Resample for visual check
