@@ -54,6 +54,57 @@ configure_sitk_threads()
 LOG_FILE = Path(r"\\raoariaapps\raoariaapps$\Utilities\tb_adaption\registration_log.csv")
 
 
+LOG_HEADERS = [
+    "patient_id",
+    "rtplan_label",
+    "timestamp",
+    "fixed_series_description",
+    "moving_series_description",
+    "registration_type",
+    "cost_function",
+    "normalized_mutual_information",
+    "initial_transform",
+    "fine_tuned_transform",
+    "final_transform",
+    "duration_seconds",
+    "accepted",
+]
+
+
+def _ensure_log_schema():
+    """Ensure the registration log uses the expected columns."""
+
+    if not LOG_FILE.exists():
+        return
+
+    try:
+        with LOG_FILE.open("r", newline="") as csvfile:
+            reader = csv.DictReader(csvfile)
+            fieldnames = reader.fieldnames or []
+            if not fieldnames:
+                return
+            rows = list(reader)
+    except OSError:
+        return
+
+    if fieldnames == LOG_HEADERS:
+        return
+
+    normalized_rows = []
+    for row in rows:
+        normalized_row = {header: row.get(header, "") for header in LOG_HEADERS}
+        normalized_rows.append(normalized_row)
+
+    try:
+        with LOG_FILE.open("w", newline="") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=LOG_HEADERS)
+            writer.writeheader()
+            writer.writerows(normalized_rows)
+    except OSError:
+        # If updating the schema fails we fall back to the existing file.
+        pass
+
+
 def _load_series_cost_history(series_description):
     """Return historical cost values for the given *series_description*."""
 
@@ -63,16 +114,18 @@ def _load_series_cost_history(series_description):
     try:
         with LOG_FILE.open("r", newline="") as csvfile:
             reader = csv.DictReader(csvfile)
-            values = []
+            normalized_values = []
             for row in reader:
                 desc = row.get("fixed_series_description", "").strip().lower()
                 if not desc or desc != series_description:
                     continue
                 try:
-                    values.append(float(row.get("cost_function", "")))
+                    normalized = row.get("normalized_mutual_information")
+                    if normalized not in (None, ""):
+                        normalized_values.append(float(normalized))
                 except (TypeError, ValueError):
                     continue
-            return values
+            return normalized_values
     except OSError:
         return []
 
@@ -83,33 +136,17 @@ def _compute_top_percentile(metric_value, historical_values):
     if not historical_values:
         return None
 
-    sorted_values = sorted(historical_values + [metric_value])
-
-    # Since lower (i.e. more negative) values are better, the first occurrence
-    # in the sorted list represents the best rank for *metric_value*.
+    sorted_values = sorted(historical_values + [metric_value], reverse=True)
     rank = sorted_values.index(metric_value) + 1  # 1-based rank
     percentile = 100 * rank / len(sorted_values)
     return percentile
 
 def _log_registration_entry(entry):
     """Append a registration entry to the CSV log."""
-    headers = [
-        "patient_id",
-        "rtplan_label",
-        "timestamp",
-        "fixed_series_description",
-        "moving_series_description",
-        "registration_type",
-        "cost_function",
-        "initial_transform",
-        "fine_tuned_transform",
-        "final_transform",
-        "duration_seconds",
-        "accepted",
-    ]
+    _ensure_log_schema()
     file_exists = LOG_FILE.exists()
     with LOG_FILE.open("a", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=headers)
+        writer = csv.DictWriter(csvfile, fieldnames=LOG_HEADERS)
         if not file_exists:
             writer.writeheader()
         writer.writerow(entry)
@@ -442,18 +479,35 @@ def calc_mutual_information(fixed_image,
     )
 
     # 5) Convert to joint probability
-    p_xy = joint_hist / joint_hist.sum()
-    p_x  = p_xy.sum(axis=1)
-    p_y  = p_xy.sum(axis=0)
+    total = joint_hist.sum()
+    if total == 0:
+        return 0.0, 0.0, 0.0
+
+    p_xy = joint_hist / total
+    p_x = p_xy.sum(axis=1)
+    p_y = p_xy.sum(axis=0)
 
     # 6) Compute MI (nats)
     nz = p_xy > 0
-    mi = np.sum(
-        p_xy[nz] * np.log( p_xy[nz]
-                           / (p_x[:,None] * p_y[None,:])[nz] )
-    )
+    denominator = (p_x[:, None] * p_y[None, :])
+    # Avoid division by zero when a marginal bin has zero probability.
+    valid = nz & (denominator > 0)
+    if not np.any(valid):
+        return 0.0, 0.0, 0.0
 
-    return mi
+    mi = np.sum(p_xy[valid] * np.log(p_xy[valid] / denominator[valid]))
+
+    # 7) Entropies for the fixed and moving distributions
+    def _entropy(probabilities):
+        nz_prob = probabilities > 0
+        if not np.any(nz_prob):
+            return 0.0
+        return -np.sum(probabilities[nz_prob] * np.log(probabilities[nz_prob]))
+
+    h_fixed = _entropy(p_x)
+    h_moving = _entropy(p_y)
+
+    return mi, h_fixed, h_moving
 
 
 def estimate_initial_transform_manual(fixed_image, moving_image):
@@ -741,7 +795,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     # print(f"{get_datetime()} Mutual information after fine-tuning: {mi:.4f}")
 
     # Rigid registration
-    rigid_transform, metric_value = perform_rigid_registration(
+    rigid_transform, registration_metric_value = perform_rigid_registration(
         iso_fixed,
         iso_moving,
         fine_tuned_transform,
@@ -751,14 +805,20 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     moving_resampled = sitk.Resample(iso_moving, iso_fixed, rigid_transform,
                                sitk.sitkLinear, min_val_moving, fixed_image.GetPixelIDValue())
 
+    mi, h_fixed, h_moving = calc_mutual_information(iso_fixed, moving_resampled)
+    if h_fixed > 0 and h_moving > 0:
+        normalized_metric_value = mi / np.sqrt(h_fixed * h_moving)
+    else:
+        normalized_metric_value = 0.0
+
     # Show images after registration
     translation = rigid_transform.GetNthTransform(0).GetTranslation()
     # print(f"Rigid translation: {translation}")
     print(f"{get_datetime()} Final transform: {[round(e, 2) for e in translation]} mm")
-    print(f"{get_datetime()} Final metric value: {metric_value:.4f}")
+    print(f"{get_datetime()} Final normalized mutual information: {normalized_metric_value:.4f}")
 
     historical_costs = _load_series_cost_history(fixed_series_description)
-    percentile = _compute_top_percentile(metric_value, historical_costs)
+    percentile = _compute_top_percentile(normalized_metric_value, historical_costs)
     if percentile is not None:
         quality_percent = 100.0 - percentile
         stars = star_rating(quality_percent)
@@ -780,13 +840,13 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         fixed_modality=fixed_modality,
         moving_modality=moving_modality,
         pad_slices=pad_slices,
-        metric_value=metric_value,
+        metric_value=normalized_metric_value,
         quality_text=quality_line,
     )
 
     prompt_lines = [
         "Accept registration result?",
-        f"Cost: {metric_value:.4f}",
+        f"Cost: {normalized_metric_value:.4f}",
         quality_line,
     ]
     prompt_lines.append("Accept? (y/n): ")
@@ -795,7 +855,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     if confirm_fn is None:
         registration_accepted = input(prompt) == "y"
     else:
-        registration_accepted = confirm_fn(metric_value, quality_line)
+        registration_accepted = confirm_fn(normalized_metric_value, quality_line)
 
     log_entry = {
         "patient_id": patient_id,
@@ -804,7 +864,8 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         "fixed_series_description": fixed_series_description,
         "moving_series_description": moving_series_description,
         "registration_type": "semi-automatic" if manual_fine_tuning else "automatic",
-        "cost_function": metric_value,
+        "cost_function": registration_metric_value,
+        "normalized_mutual_information": normalized_metric_value,
         "initial_transform": ",".join(f"{v:.2f}" for v in prealign_transform_translation),
         "fine_tuned_transform": ",".join(f"{v:.2f}" for v in fine_tuned_transform.GetTranslation()),
         "final_transform": ",".join(
@@ -821,10 +882,10 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         # so we pass rigid_transform as is.
         create_registration_file(output_reg_file, rigid_transform, fixed_meta, moving_meta,
                                  fixed_files, moving_files)
-        return rigid_transform, metric_value, used_fixed_uid, used_moving_uid
+        return rigid_transform, normalized_metric_value, used_fixed_uid, used_moving_uid
     else:
         print(f"{get_datetime()} Registration rejected")
-        return None, metric_value, None, None
+        return None, normalized_metric_value, None, None
 
 
 # --------------------------------------------------------------------
