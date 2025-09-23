@@ -750,20 +750,21 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         pad_slices=pad_slices,
     )
 
+    historical_costs = _load_series_cost_history(fixed_series_description)
+    percentile = _compute_top_percentile(metric_value, historical_costs)
+    prompt_lines = [
+        "Accept registration result?",
+        f"Cost: {metric_value:.4f}",
+    ]
+    if percentile is not None:
+        prompt_lines.append(f"Top {percentile:.1f}% of registrations")
+    prompt_lines.append("Accept? (y/n): ")
+    prompt = "\n".join(prompt_lines)
+
     if confirm_fn is None:
-        historical_costs = _load_series_cost_history(fixed_series_description)
-        percentile = _compute_top_percentile(metric_value, historical_costs)
-        if percentile is not None:
-            prompt = (
-                "Registration cost: "
-                f"{metric_value:.4f} (top {percentile:.1f}% of registrations). "
-                "Accept? (y/n): "
-            )
-        else:
-            prompt = f"Registration cost: {metric_value:.4f}. Accept? (y/n): "
         registration_accepted = input(prompt) == "y"
     else:
-        registration_accepted = confirm_fn(metric_value)
+        registration_accepted = confirm_fn(metric_value, percentile)
 
     log_entry = {
         "patient_id": patient_id,
