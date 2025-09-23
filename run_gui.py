@@ -479,8 +479,13 @@ def main():
         root.update_idletasks()
         try:
 
-            def confirm(cost_value):
-                msg = f"Accept registration result?\nCost: {cost_value:.4f}"
+            def confirm(cost_value, percentile):
+                details = [f"Cost: {cost_value:.4f}"]
+                if percentile is not None:
+                    details.append(
+                        f"Top {percentile:.1f}% of registrations"
+                    )
+                msg = "Accept registration result?\n" + "\n".join(details)
                 return messagebox.askyesno("Registration", msg)
 
             # Determine which series the user selected in the dropdowns
