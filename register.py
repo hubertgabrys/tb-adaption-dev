@@ -683,7 +683,6 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     translation = rigid_transform.GetNthTransform(0).GetTranslation()
     # print(f"Rigid translation: {translation}")
     print(f"{get_datetime()} Final transform: {[round(e, 2) for e in translation]} mm")
-    mi = calc_mutual_information(iso_fixed, moving_resampled)
     print(f"{get_datetime()} Final metric value: {metric_value:.4f}")
 
     end_time = time.time()
