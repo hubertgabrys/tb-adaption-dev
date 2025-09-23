@@ -33,6 +33,44 @@ configure_sitk_threads()
 
 LOG_FILE = Path(r"\\raoariaapps\raoariaapps$\Utilities\tb_adaption\registration_log.csv")
 
+
+def _load_series_cost_history(series_description):
+    """Return historical cost values for the given *series_description*."""
+
+    if not LOG_FILE.exists():
+        return []
+
+    try:
+        with LOG_FILE.open("r", newline="") as csvfile:
+            reader = csv.DictReader(csvfile)
+            values = []
+            for row in reader:
+                desc = row.get("fixed_series_description", "").strip().lower()
+                if not desc or desc != series_description:
+                    continue
+                try:
+                    values.append(float(row.get("cost_function", "")))
+                except (TypeError, ValueError):
+                    continue
+            return values
+    except OSError:
+        return []
+
+
+def _compute_top_percentile(metric_value, historical_values):
+    """Return the percentile rank (best = small number) among *historical_values*."""
+
+    if not historical_values:
+        return None
+
+    sorted_values = sorted(historical_values + [metric_value])
+
+    # Since lower (i.e. more negative) values are better, the first occurrence
+    # in the sorted list represents the best rank for *metric_value*.
+    rank = sorted_values.index(metric_value) + 1  # 1-based rank
+    percentile = 100 * rank / len(sorted_values)
+    return percentile
+
 def _log_registration_entry(entry):
     """Append a registration entry to the CSV log."""
     headers = [
@@ -613,8 +651,13 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     #     print(f"{get_datetime()} Failed to crop fixed image by intensity: {exc}")
 
     print(f"{get_datetime()} Extracting metadata from images")
-    fixed_meta = extract_metadata(fixed_dir / os.path.basename(fixed_files[0]))
-    moving_meta = extract_metadata(moving_dir / os.path.basename(moving_files[0]))
+    fixed_first_file = fixed_dir / os.path.basename(fixed_files[0])
+    moving_first_file = moving_dir / os.path.basename(moving_files[0])
+
+    fixed_meta = extract_metadata(fixed_first_file)
+    moving_meta = extract_metadata(moving_first_file)
+    fixed_series_description = get_series_description(fixed_first_file)
+    moving_series_description = get_series_description(moving_first_file)
 
     # Resample both images to 1.5x1.5x1.5 mm
     print(f"{get_datetime()} Resampling both images to 1.5x1.5x1.5 mm")
@@ -708,7 +751,16 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     )
 
     if confirm_fn is None:
-        prompt = f"Registration cost: {metric_value:.4f}. Accept? (y/n): "
+        historical_costs = _load_series_cost_history(fixed_series_description)
+        percentile = _compute_top_percentile(metric_value, historical_costs)
+        if percentile is not None:
+            prompt = (
+                "Registration cost: "
+                f"{metric_value:.4f} (top {percentile:.1f}% of registrations). "
+                "Accept? (y/n): "
+            )
+        else:
+            prompt = f"Registration cost: {metric_value:.4f}. Accept? (y/n): "
         registration_accepted = input(prompt) == "y"
     else:
         registration_accepted = confirm_fn(metric_value)
@@ -717,8 +769,8 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         "patient_id": patient_id,
         "rtplan_label": rtplan_label,
         "timestamp": datetime.datetime.now().isoformat(),
-        "fixed_series_description": get_series_description(fixed_files[0]),
-        "moving_series_description": get_series_description(moving_files[0]),
+        "fixed_series_description": fixed_series_description,
+        "moving_series_description": moving_series_description,
         "registration_type": "semi-automatic" if manual_fine_tuning else "automatic",
         "cost_function": metric_value,
         "initial_transform": ",".join(f"{v:.2f}" for v in prealign_transform_translation),
