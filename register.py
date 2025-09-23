@@ -64,15 +64,22 @@ def _ensure_log_schema():
         with LOG_FILE.open("r", newline="") as csvfile:
             reader = csv.DictReader(csvfile)
             fieldnames = reader.fieldnames or []
-            if "normalized_cost_function" in fieldnames or not fieldnames:
+            if not fieldnames:
                 return
             rows = list(reader)
     except OSError:
         return
 
-    fieldnames = fieldnames + ["normalized_cost_function"]
-    for row in rows:
-        row.setdefault("normalized_cost_function", "")
+    added = False
+    for column in ("normalized_cost_function", "normalized_mutual_information"):
+        if column not in fieldnames:
+            fieldnames.append(column)
+            added = True
+            for row in rows:
+                row.setdefault(column, "")
+
+    if not added:
+        return
 
     try:
         with LOG_FILE.open("w", newline="") as csvfile:
@@ -100,9 +107,13 @@ def _load_series_cost_history(series_description):
                 if not desc or desc != series_description:
                     continue
                 try:
-                    normalized = row.get("normalized_cost_function")
+                    normalized = row.get("normalized_mutual_information")
                     if normalized not in (None, ""):
                         normalized_values.append(float(normalized))
+                        continue
+                    legacy_normalized = row.get("normalized_cost_function")
+                    if legacy_normalized not in (None, ""):
+                        normalized_values.append(float(legacy_normalized))
                         continue
                     legacy = row.get("cost_function", "")
                     if legacy != "":
@@ -149,6 +160,7 @@ def _log_registration_entry(entry):
         "registration_type",
         "cost_function",
         "normalized_cost_function",
+        "normalized_mutual_information",
         "initial_transform",
         "fine_tuned_transform",
         "final_transform",
@@ -806,7 +818,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     # print(f"{get_datetime()} Mutual information after fine-tuning: {mi:.4f}")
 
     # Rigid registration
-    rigid_transform, _registration_metric = perform_rigid_registration(
+    rigid_transform, registration_metric_value = perform_rigid_registration(
         iso_fixed,
         iso_moving,
         fine_tuned_transform,
@@ -818,18 +830,18 @@ def perform_registration(current_directory, patient_id, rtplan_label,
 
     mi, h_fixed, h_moving = calc_mutual_information(iso_fixed, moving_resampled)
     if h_fixed > 0 and h_moving > 0:
-        metric_value = mi / np.sqrt(h_fixed * h_moving)
+        normalized_metric_value = mi / np.sqrt(h_fixed * h_moving)
     else:
-        metric_value = 0.0
+        normalized_metric_value = 0.0
 
     # Show images after registration
     translation = rigid_transform.GetNthTransform(0).GetTranslation()
     # print(f"Rigid translation: {translation}")
     print(f"{get_datetime()} Final transform: {[round(e, 2) for e in translation]} mm")
-    print(f"{get_datetime()} Final normalized mutual information: {metric_value:.4f}")
+    print(f"{get_datetime()} Final normalized mutual information: {normalized_metric_value:.4f}")
 
     historical_costs = _load_series_cost_history(fixed_series_description)
-    percentile = _compute_top_percentile(metric_value, historical_costs)
+    percentile = _compute_top_percentile(normalized_metric_value, historical_costs)
     if percentile is not None:
         quality_percent = 100.0 - percentile
         stars = star_rating(quality_percent)
@@ -857,13 +869,13 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         fixed_modality=fixed_modality,
         moving_modality=moving_modality,
         pad_slices=pad_slices,
-        metric_value=metric_value,
+        metric_value=normalized_metric_value,
         quality_text=quality_line,
     )
 
     prompt_lines = [
         "Accept registration result?",
-        f"Cost: {metric_value:.4f}",
+        f"Cost: {normalized_metric_value:.4f}",
         quality_line,
     ]
     prompt_lines.append("Accept? (y/n): ")
@@ -872,7 +884,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     if confirm_fn is None:
         registration_accepted = input(prompt) == "y"
     else:
-        registration_accepted = confirm_fn(metric_value, quality_line)
+        registration_accepted = confirm_fn(normalized_metric_value, quality_line)
 
     log_entry = {
         "patient_id": patient_id,
@@ -881,8 +893,9 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         "fixed_series_description": fixed_series_description,
         "moving_series_description": moving_series_description,
         "registration_type": "semi-automatic" if manual_fine_tuning else "automatic",
-        "cost_function": metric_value,
-        "normalized_cost_function": metric_value,
+        "cost_function": registration_metric_value,
+        "normalized_cost_function": "",
+        "normalized_mutual_information": normalized_metric_value,
         "initial_transform": ",".join(f"{v:.2f}" for v in prealign_transform_translation),
         "fine_tuned_transform": ",".join(f"{v:.2f}" for v in fine_tuned_transform.GetTranslation()),
         "final_transform": ",".join(
@@ -899,10 +912,10 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         # so we pass rigid_transform as is.
         create_registration_file(output_reg_file, rigid_transform, fixed_meta, moving_meta,
                                  fixed_files, moving_files)
-        return rigid_transform, metric_value, used_fixed_uid, used_moving_uid
+        return rigid_transform, normalized_metric_value, used_fixed_uid, used_moving_uid
     else:
         print(f"{get_datetime()} Registration rejected")
-        return None, metric_value, None, None
+        return None, normalized_metric_value, None, None
 
 
 # --------------------------------------------------------------------
