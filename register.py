@@ -1164,6 +1164,9 @@ class MultiViewOverlay:
         self.slider_shift_z.on_changed(self.update_shift_z)
 
         self.fig.canvas.mpl_connect('scroll_event', self.on_scroll)
+
+    def show(self):
+        """Display the viewer window."""
         plt.show()
 
     def _compute_range(self, array, modality):
@@ -1354,4 +1357,5 @@ def run_viewer(
         info_parts.append(quality_text)
     if info_parts:
         overlay.fig.suptitle(" | ".join(info_parts), fontsize=14)
+    overlay.show()
     return overlay.shift_z, overlay.shift_y, overlay.shift_x
