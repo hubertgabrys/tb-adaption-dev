@@ -462,7 +462,7 @@ def make_body_mask(img: sitk.Image, modality: str) -> sitk.Image:
     cc = sitk.ConnectedComponent(mask)
     relabeled = sitk.RelabelComponent(cc, sortByObjectSize=True)
     largest = sitk.BinaryThreshold(relabeled, 1, 1, 1, 0)
-    closed = sitk.BinaryMorphologicalClosing(largest, 2)
+    closed = sitk.BinaryMorphologicalClosing(largest, kernelRadius=(2,) * img.GetDimension())
     return sitk.Cast(closed, sitk.sitkUInt8)
 
 def winsorize_and_rescale(img: sitk.Image, mask: sitk.Image, low_q: float = 1.0, high_q: float = 99.0) -> sitk.Image:
@@ -785,14 +785,11 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     min_val_moving = -1024 if moving_modality == "CT" else 0
 
     # ----- Robust preprocessing: masks, N4 for MR, winsorize+rescale -----
+    print(f"{get_datetime()} Generating BODY masks")
     fixed_mask  = make_body_mask(iso_fixed,  fixed_modality)
     moving_mask = make_body_mask(iso_moving, moving_modality)
 
-    if fixed_modality.upper() == "MR":
-        iso_fixed = n4_correct_mri(iso_fixed, fixed_mask)
-    if moving_modality.upper() == "MR":
-        iso_moving = n4_correct_mri(iso_moving, moving_mask)
-
+    print(f"{get_datetime()} Clipping and rescaling")
     iso_fixed  = winsorize_and_rescale(iso_fixed,  fixed_mask)
     iso_moving = winsorize_and_rescale(iso_moving, moving_mask)
     # ---------------------------------------------------------------------
@@ -817,20 +814,16 @@ def perform_registration(current_directory, patient_id, rtplan_label,
             moving_modality=moving_modality,
         )
     else:
-        if pad_slices > 0:
-            # translation-only exhaustive search for t2_tse_tra series
-            fine_tuned_transform = tune_initial_registration(
-                iso_fixed,
-                iso_moving,
-                prealign_transform,
-                mode='auto',
-                pad_slices=pad_slices,
-                fixed_modality=fixed_modality,
-                moving_modality=moving_modality,
-            )
-        else:
-            print(f"{get_datetime()} No fine tuning needed.")
-            fine_tuned_transform = prealign_transform
+        # translation-only exhaustive search
+        fine_tuned_transform = tune_initial_registration(
+            iso_fixed,
+            iso_moving,
+            prealign_transform,
+            mode='auto',
+            pad_slices=pad_slices,
+            fixed_modality=fixed_modality,
+            moving_modality=moving_modality,
+        )
 
     # Fine-tuned prealignment
     print(f"{get_datetime()} Fine-tuned transform: {[round(e,2) for e in fine_tuned_transform.GetTranslation()]} mm")
@@ -908,12 +901,8 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         quality_text=quality_line,
     )
 
-    prompt_lines = [
-        "Accept registration result?",
-        f"Cost: {normalized_metric_value:.4f}",
-        quality_line,
-    ]
-    prompt_lines.append("Accept? (y/n): ")
+    prompt_lines = ["Accept registration result?", f"Cost: {normalized_metric_value:.4f}", quality_line,
+                    "Accept? (y/n): "]
     prompt = "\n".join(prompt_lines)
 
     if confirm_fn is None:
@@ -1162,10 +1151,8 @@ class MultiViewOverlay:
         self.moving_modality = moving_modality
 
         # compute intensity range
-        self.fixed_vmin, self.fixed_vmax = self._compute_range(self.fixed,
-                                                                self.fixed_modality)
-        self.moving_vmin, self.moving_vmax = self._compute_range(self.moving,
-                                                                  self.moving_modality)
+        self.fixed_vmin, self.fixed_vmax = self._compute_range(self.fixed)
+        self.moving_vmin, self.moving_vmax = self._compute_range(self.moving)
 
         # set cmaps
         self.cmap_fixed = plt.get_cmap("gray")
@@ -1294,9 +1281,7 @@ class MultiViewOverlay:
         """Display the viewer window."""
         plt.show()
 
-    def _compute_range(self, array, modality):
-        if modality == "CT":
-            return -160.0, 240.0
+    def _compute_range(self, array):
         lo = np.percentile(array, 2)
         hi = np.percentile(array, 98)
         if lo == hi:
@@ -1455,7 +1440,7 @@ def run_viewer(
     else:
         padded_fixed = fixed_image
 
-    default_bg = -1024 if moving_modality.upper() == "CT" else 0
+    default_bg = 0
     resampled_moving = sitk.Resample(
         moving_image,
         padded_fixed,
