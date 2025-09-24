@@ -864,15 +864,15 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         bins=64, sample_fraction=0.1, percentile_clip=(1, 99),
         mask=common_mask
     )
-    if h_fixed > 0 and h_moving > 0:
-        normalized_metric_value = mi / np.sqrt(h_fixed * h_moving)
-    else:
-        normalized_metric_value = 0.0
+    # Studholme’s NMI = (H(X)+H(Y)) / H(X,Y), and H(X,Y) = H(X)+H(Y) - MI
+    h_joint = (h_fixed + h_moving) - mi
+    eps = 1e-12  # numerical safeguard; joint entropy should not be <= 0, but protect anyway
+    normalized_metric_value = (h_fixed + h_moving) / max(h_joint, eps)
 
     # Show images after registration
     translation = rigid_transform.GetNthTransform(0).GetTranslation()
     print(f"{get_datetime()} Final transform: {[round(e, 2) for e in translation]} mm")
-    print(f"{get_datetime()} Final normalized mutual information: {normalized_metric_value:.4f}")
+    print(f"{get_datetime()} Final normalized mutual information (Studholme): {normalized_metric_value:.4f}")
 
     historical_costs = _load_series_cost_history(fixed_series_description)
     percentile = _compute_top_percentile(normalized_metric_value, historical_costs)
@@ -1462,7 +1462,7 @@ def run_viewer(
     )
     info_parts: list[str] = []
     if metric_value is not None:
-        info_parts.append(f"Cost: {metric_value:.4f}")
+        info_parts.append(f"NMI (Studholme): {metric_value:.4f}")
     if quality_text:
         info_parts.append(quality_text)
     if info_parts:
