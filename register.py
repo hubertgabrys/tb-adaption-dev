@@ -462,7 +462,7 @@ def make_body_mask(img: sitk.Image, modality: str) -> sitk.Image:
     cc = sitk.ConnectedComponent(mask)
     relabeled = sitk.RelabelComponent(cc, sortByObjectSize=True)
     largest = sitk.BinaryThreshold(relabeled, 1, 1, 1, 0)
-    closed = sitk.BinaryMorphologicalClosing(largest, kernelRadius=(2,) * img.GetDimension())
+    closed = sitk.BinaryMorphologicalClosing(largest, kernelRadius=(13,) * img.GetDimension())
     return sitk.Cast(closed, sitk.sitkUInt8)
 
 def winsorize_and_rescale(img: sitk.Image, mask: sitk.Image, low_q: float = 1.0, high_q: float = 99.0) -> sitk.Image:
