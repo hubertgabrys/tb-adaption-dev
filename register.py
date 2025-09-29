@@ -1282,8 +1282,8 @@ class MultiViewOverlay:
         plt.show()
 
     def _compute_range(self, array):
-        lo = np.percentile(array, 2)
-        hi = np.percentile(array, 98)
+        lo = np.percentile(array, 1)
+        hi = np.percentile(array, 99)
         if lo == hi:
             lo = float(np.min(array))
             hi = float(np.max(array))
