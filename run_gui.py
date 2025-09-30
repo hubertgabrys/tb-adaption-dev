@@ -700,11 +700,11 @@ def main():
             uid
             for uid, info in series_info.items()
             if info.get('modality') in ('MR')
-               and (
-                       info.get('description', '').startswith('t2_tse_tra')
-                       or info.get('description', '').startswith('sCT_sp')
-                       or info.get('description', '').endswith('dixon_tra_Siemens_in')
-               )
+               # and (
+               #         info.get('description', '').startswith('t2_tse_tra')
+               #         or info.get('description', '').startswith('sCT_sp')
+               #         or info.get('description', '').endswith('dixon_tra_Siemens_in')
+               # )
         ]
         for uid in filtered_uids:
             info = series_info[uid]
