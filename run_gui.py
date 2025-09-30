@@ -239,6 +239,15 @@ def main():
     )
     lbl_rtplan.grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
+    # Full automation checkbox above the base plan button
+    full_automation_var = tk.BooleanVar(value=False)
+    chk_full_automation = tk.Checkbutton(
+        root,
+        text="Full automation",
+        variable=full_automation_var,
+    )
+    chk_full_automation.grid(row=4, column=0, sticky="w", padx=10, pady=(0, 5))
+
     # Get Base Plan button with status label
     baseplan_status = tk.Label(root, text="", font=("Helvetica", 14))
 
@@ -263,8 +272,8 @@ def main():
             baseplan_status.config(text="\u274C", fg="red")
 
     btn_baseplan = tk.Button(root, text="Get base plan", command=on_get_base_plan)
-    btn_baseplan.grid(row=4, column=0, sticky="w", padx=10)
-    baseplan_status.grid(row=4, column=1, sticky="w")
+    btn_baseplan.grid(row=5, column=0, sticky="w", padx=10)
+    baseplan_status.grid(row=5, column=1, sticky="w")
 
     # Store base plan series information
     base_series_info = {}
@@ -383,8 +392,8 @@ def main():
             images_status.config(text="\u274C", fg="red")
 
     btn_images = tk.Button(root, text="Get imaging", command=on_get_images)
-    btn_images.grid(row=5, column=0, sticky="w", padx=10, pady=(0, 5))
-    images_status.grid(row=5, column=1, sticky="w")
+    btn_images.grid(row=6, column=0, sticky="w", padx=10, pady=(0, 5))
+    images_status.grid(row=6, column=1, sticky="w")
 
     # Imaging series frame (initially empty)
     series_frame = tk.Frame(root)
