@@ -5,6 +5,5 @@ SimpleITK
 tqdm
 numpy
 python-dotenv
-pyzipper
 pandas
 joblib

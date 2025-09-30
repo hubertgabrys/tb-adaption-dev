@@ -1,14 +1,11 @@
 import datetime
 import functools
+import os
 import sys
 import warnings
 
-import pydicom
-from pydicom.valuerep import DS
 from dotenv import load_dotenv
-
-
-ALLOWED_SERIES = ['SyntheticCT HU', 'sCTp1-Dixon-HR_in', 't2_tse_tra']
+from pydicom.valuerep import DS
 
 
 def float_to_ds_string(x: float, precision: int = 8) -> DS:
@@ -21,60 +18,6 @@ def float_to_ds_string(x: float, precision: int = 8) -> DS:
 
 def get_datetime():
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-
-def find_series_uids(dir_path):
-    """
-    Get a dictionary of unique SeriesInstanceUIDs from DICOM files in a directory.
-    Each key in the dictionary maps to a list of file paths that share that SeriesInstanceUID.
-
-    Args:
-        dir_path (str): Path to the directory containing DICOM files.
-
-    Returns:
-        Dict[str, List[str]]: Dictionary where each key is a SeriesInstanceUID and
-                              each value is a list of filepaths corresponding to that UID.
-    """
-    series_instance_uids = {}
-
-    # Loop through all files in the directory
-    for filename in os.listdir(dir_path):
-        filepath = os.path.join(dir_path, filename)
-
-        # Try reading the file as a DICOM file
-        try:
-            # Only read SeriesInstanceUID (avoid reading unnecessary data/pixels)
-            dataset = pydicom.dcmread(
-                filepath,
-                specific_tags=['SeriesInstanceUID', 'SeriesDescription'],
-                stop_before_pixels=True
-            )
-
-            # series_desc = dataset.get("SeriesDescription", "")
-            # if not any(allowed in series_desc for allowed in ALLOWED_SERIES):
-            #     continue
-
-            # If the SeriesInstanceUID attribute exists in the dataset
-            if 'SeriesInstanceUID' in dataset:
-                uid = dataset.SeriesInstanceUID
-
-                # Initialize the list if this UID is not yet in the dictionary
-                if uid not in series_instance_uids:
-                    series_instance_uids[uid] = []
-
-                # Append this file's path under the appropriate UID
-                series_instance_uids[uid].append(filepath)
-
-        except Exception as e:
-            # Handle non-DICOM files or errors in reading
-            print(f"Skipping {filename}: {e}")
-
-    return series_instance_uids
-
-
-import os
-
 
 def check_if_ct_present(directory):
     """
