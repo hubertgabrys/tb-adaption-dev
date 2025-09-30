@@ -20,6 +20,7 @@ from utils import (
     load_environment,
     configure_sitk_threads,
     float_to_ds_string,
+    require_env,
 )
 from copy_structures import read_base_rtstruct
 
@@ -151,7 +152,7 @@ def _log_registration_entry(entry):
         writer.writerow(entry)
 
 def get_base_plan(patient_id, rtplan_label, rtplan_uid):
-    baseplan_dir = Path(os.environ.get('BASEPLAN_DIR'))
+    baseplan_dir = Path(require_env('BASEPLAN_DIR'))
     moving_dir = baseplan_dir / patient_id / rtplan_label
     if os.path.isdir(moving_dir):
         print(f"{get_datetime()} Base plan exists")
@@ -159,11 +160,11 @@ def get_base_plan(patient_id, rtplan_label, rtplan_uid):
     else:
         print(f"{get_datetime()} Downloading the base plan")
         dbh = DBHandler(
-            server_ip=os.environ.get('SERVER_IP'),
-            server_port=int(os.environ.get('SERVER_PORT')),
-            called_ae_title=os.environ.get('SERVER_AE_TITLE'),
+            server_ip=require_env('SERVER_IP'),
+            server_port=int(require_env('SERVER_PORT')),
+            called_ae_title=require_env('SERVER_AE_TITLE'),
             calling_ae_title=socket.gethostname(),
-            scp_port=int(os.environ.get('SCP_PORT')))
+            scp_port=int(require_env('SCP_PORT')))
         dbh.export_dicom(patient_id, rtplan_label, moving_dir, to_export=("rtplan", "ct", "rtstruct"),
                          rtplan_uid=rtplan_uid)
 
@@ -641,12 +642,13 @@ def perform_rigid_registration(fixed_image, moving_image, initial_transform, fix
 def perform_registration(current_directory, patient_id, rtplan_label,
                          selected_series_uid=None, selected_modality=None,
                          moving_series_uid=None, moving_modality=None,
-                         confirm_fn=None, manual_fine_tuning=True):
+                         confirm_fn=None, manual_fine_tuning=True,
+                         viewer_fn=None):
     print(f"{get_datetime()} Starting registration process...")
     start_time = time.time()
     current_directory = Path(current_directory)
     fixed_dir = current_directory
-    baseplan_dir = Path(os.environ.get('BASEPLAN_DIR'))
+    baseplan_dir = Path(require_env('BASEPLAN_DIR'))
     moving_dir = baseplan_dir / patient_id / rtplan_label
     output_reg_file = current_directory / "REG.dcm"
 
@@ -839,9 +841,11 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     print(f"{get_datetime()} Registration took {duration:.2f} seconds")
     print(f"{get_datetime()} DONE\n")
 
-    run_viewer(
+    viewer = viewer_fn or run_viewer
+    viewer(
         iso_fixed,
-        iso_moving, rigid_transform,
+        iso_moving,
+        rigid_transform,
         fixed_modality=fixed_modality,
         moving_modality=moving_modality,
         pad_slices=pad_slices,

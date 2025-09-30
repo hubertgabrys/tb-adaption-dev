@@ -11,7 +11,7 @@ from preprocessing import (
     list_dicom_series,
     process_single_dicom_file,
 )
-from register import get_base_plan, perform_registration
+from register import get_base_plan, perform_registration, run_viewer
 from tkinter import messagebox
 from tkinter import ttk
 from resampling import resample_ct
@@ -19,7 +19,10 @@ from export import send_files_to_aria
 from utils import (
     load_environment,
     check_if_ct_present,
-    configure_sitk_threads, count_files, get_datetime,
+    configure_sitk_threads,
+    count_files,
+    get_datetime,
+    require_env,
 )
 from segmentation import create_empty_rtstruct
 from copy_structures import copy_structures, _rtstruct_references_series
@@ -32,29 +35,72 @@ import gc
 class ConsoleRedirector:
     """Redirect writes to a Tkinter text widget from any thread."""
 
-    def __init__(self, widget):
+    def __init__(self, widget, max_queue: int = 1000):
         self.widget = widget
-        self.queue: queue.Queue[str] = queue.Queue()
+        self.queue: queue.Queue[str] = queue.Queue(maxsize=max_queue)
+        self._dropped = 0
         self.widget.after(100, self._poll_queue)
 
     def write(self, text: str) -> None:
         """Thread-safe write that schedules GUI updates on the main thread."""
-        self.queue.put(text)
+
+        try:
+            self.queue.put_nowait(text)
+        except queue.Full:
+            self._dropped += 1
+
+    def _append_text(self, text: str) -> None:
+        self.widget.configure(state="normal")
+        self.widget.insert("end", text)
+        self.widget.see("end")
+        self.widget.configure(state="disabled")
 
     def _poll_queue(self) -> None:
         try:
             while True:
                 text = self.queue.get_nowait()
-                self.widget.configure(state="normal")
-                self.widget.insert("end", text)
-                self.widget.see("end")
-                self.widget.configure(state="disabled")
+                self._append_text(text)
         except queue.Empty:
             pass
+
+        if self._dropped:
+            dropped = self._dropped
+            self._dropped = 0
+            self._append_text(
+                f"\n… {dropped} console messages dropped (queue full) …\n"
+            )
+
         self.widget.after(100, self._poll_queue)
 
     def flush(self) -> None:
         pass
+
+
+def _is_placeholder_rtstruct(path: str) -> bool:
+    """Return True if *path* points to a synthetic empty RTSTRUCT we created."""
+
+    try:
+        ds = pydicom.dcmread(path, stop_before_pixels=True, force=True)
+    except Exception:
+        return False
+
+    try:
+        roi_seq = getattr(ds, "StructureSetROISequence", None)
+        if not roi_seq:
+            return False
+        first_roi = roi_seq[0]
+        if getattr(first_roi, "ROIName", "") != "Dummy_PH":
+            return False
+        contour_seq = getattr(ds, "ROIContourSequence", None)
+        if not contour_seq:
+            return True
+        for item in contour_seq:
+            seq = getattr(item, "ContourSequence", None)
+            if seq and len(seq):
+                return False
+        return True
+    except Exception:
+        return False
 
 
 def rename_all_dicom_files(directory_path: str) -> None:
@@ -67,12 +113,24 @@ def rename_all_dicom_files(directory_path: str) -> None:
             if entry.is_file() and entry.name.lower().endswith('.dcm')
         ]
 
+    errors: list[Exception] = []
     with ThreadPoolExecutor(max_workers=os.cpu_count() or 1) as pool:
-        for _ in as_completed([
+        futures = [
             pool.submit(process_single_dicom_file, directory_path, fname)
             for fname in files
-        ]):
-            pass  # you could catch exceptions here if needed
+        ]
+        for fut in as_completed(futures):
+            try:
+                fut.result()
+            except Exception as exc:  # pragma: no cover - surfaced to caller
+                errors.append(exc)
+
+    if errors:
+        # Raise the first exception to fail the caller while still logging all
+        # issues for debugging.
+        for err in errors:
+            print(f"{get_datetime()} Failed to rename DICOM: {err}")
+        raise errors[0]
 
 
 def wait_for_stable_imaging(directory: str, interval: float = 1.0,
@@ -208,7 +266,14 @@ def main():
               "or set PATIENT_ID, RTPLAN_LABEL and RTPLAN_UID in your env.")
         sys.exit(1)
 
-    input_dir = Path(os.environ.get("INPUT_DIR")) / patient_id
+    try:
+        input_root = Path(require_env("INPUT_DIR"))
+        baseplan_root = Path(require_env("BASEPLAN_DIR"))
+    except EnvironmentError as exc:
+        print(str(exc))
+        sys.exit(1)
+
+    input_dir = input_root / patient_id
     patient_name = get_patient_name(str(input_dir))
 
     root = tk.Tk()
@@ -265,6 +330,8 @@ def main():
         "sent_series_uids": set(),
         "pending_send_uids": set(),
     }
+
+    placeholder_rtstructs: dict[str, tuple[str, str]] = {}
 
     def automation_log(message: str) -> None:
         """Emit a timestamped log entry for automation-specific events."""
@@ -432,7 +499,7 @@ def main():
         try:
             get_base_plan(patient_id, rtplan_label, rtplan_uid)
             # List series in the base plan directory
-            base_dir = Path(os.environ.get("BASEPLAN_DIR")) / patient_id / rtplan_label
+            base_dir = baseplan_root / patient_id / rtplan_label
             if base_dir.exists():
                 base_series_info.clear()
                 base_series_info.update(list_dicom_series(str(base_dir)))
@@ -441,8 +508,9 @@ def main():
             end_time = time.time()
             print(f"{get_datetime()} Getting the base plan took {end_time - start_time:.2f} seconds")
             print(f"{get_datetime()} DONE\n")
-        except Exception:
+        except Exception as exc:
             baseplan_status.config(text="\u274C", fg="red")
+            print(f"{get_datetime()} Failed to get base plan: {exc}")
 
     btn_baseplan = tk.Button(root, text="Get base plan", command=on_get_base_plan)
     btn_baseplan.grid(row=5, column=0, sticky="w", padx=10)
@@ -469,7 +537,7 @@ def main():
         print(f"{get_datetime()} Getting images from {input_dir}...")
         start_time = time.time()
         nonlocal series_info, series_vars, checkbox_texts, references_map
-        nonlocal latest_imaging_uids, imaging_refresh_in_progress
+        nonlocal latest_imaging_uids, imaging_refresh_in_progress, placeholder_rtstructs
         if imaging_refresh_in_progress:
             print(f"{get_datetime()} Imaging refresh already in progress; skipping new request.")
             if completion_callback:
@@ -535,16 +603,49 @@ def main():
 
                 local_series = list_dicom_series(str(input_dir))
 
+                # Drop stale placeholder bookkeeping when the files vanish.
+                for ref, (_, path) in list(placeholder_rtstructs.items()):
+                    if not os.path.exists(path):
+                        placeholder_rtstructs.pop(ref, None)
+
+                real_rtstruct_refs: set[str] = set()
+                for uid, info in list(local_series.items()):
+                    if info.get("modality") != "RTSTRUCT":
+                        continue
+                    refs = info.get("references", []) or []
+                    files = info.get("files", [])
+                    entry_is_placeholder = True
+                    for fpath in files:
+                        if _is_placeholder_rtstruct(fpath):
+                            for ref in refs:
+                                placeholder_rtstructs[ref] = (uid, fpath)
+                        else:
+                            entry_is_placeholder = False
+                    if not entry_is_placeholder:
+                        real_rtstruct_refs.update(refs)
+
+                for ref in list(real_rtstruct_refs):
+                    placeholder_entry = placeholder_rtstructs.pop(ref, None)
+                    if not placeholder_entry:
+                        continue
+                    placeholder_uid, placeholder_path = placeholder_entry
+                    if placeholder_path and os.path.exists(placeholder_path):
+                        try:
+                            os.remove(placeholder_path)
+                        except Exception:
+                            pass
+                    local_series.pop(placeholder_uid, None)
+
                 imaging_uids = [
                     uid
                     for uid, info in local_series.items()
                     if info.get("modality") not in ("RTSTRUCT", "REG")
                 ]
 
-                references = {}
+                references: dict[str, list[str]] = {}
                 for uid, info in local_series.items():
                     if info.get("modality") == "RTSTRUCT":
-                        for ref in info.get("references", []):
+                        for ref in info.get("references", []) or []:
                             references.setdefault(ref, []).append(uid)
 
                 for uid in imaging_uids:
@@ -566,6 +667,7 @@ def main():
                                 "references": [uid],
                             }
                             references.setdefault(uid, []).append(new_uid)
+                            placeholder_rtstructs[uid] = (new_uid, rs_path)
                         except Exception:
                             pass
 
@@ -584,6 +686,9 @@ def main():
 
                 for uid in to_remove:
                     local_series.pop(uid, None)
+                for ref, (rs_uid, _) in list(placeholder_rtstructs.items()):
+                    if rs_uid in to_remove:
+                        placeholder_rtstructs.pop(ref, None)
 
                 registration_uids = [
                     uid
@@ -613,28 +718,49 @@ def main():
     def on_cleanup():
         cleanup_status.config(text="\u23F3", fg="orange")  # hourglass
         root.update_idletasks()
-        try:
-            # delete the series with checkboxes ticked
-            uids_to_delete = [uid for uid, var in series_vars.items() if var.get()]
-            for uid in uids_to_delete:
-                info = series_info.get(uid, {})
-                for fpath in info.get("files", []):
-                    try:
-                        os.remove(fpath)
-                    except Exception:
-                        pass
-                for rs_uid in references_map.get(uid, []):
-                    rs_info = series_info.get(rs_uid, {})
-                    for fpath in rs_info.get("files", []):
+
+        uids_to_delete = [uid for uid, var in series_vars.items() if var.get()]
+        if not uids_to_delete:
+            cleanup_status.config(text="", fg="orange")
+            return
+
+        def worker():
+            success = True
+            removed_rtstruct_uids: set[str] = set()
+            try:
+                for uid in uids_to_delete:
+                    info = series_info.get(uid, {})
+                    for fpath in info.get("files", []):
                         try:
                             os.remove(fpath)
                         except Exception:
-                            pass
-            cleanup_status.config(text="\u2705", fg="green")
-        except Exception:
-            cleanup_status.config(text="\u274C", fg="red")
-        # refresh displayed series after cleanup
-        on_get_images()
+                            success = False
+                    for rs_uid in references_map.get(uid, []):
+                        rs_info = series_info.get(rs_uid, {})
+                        for fpath in rs_info.get("files", []):
+                            try:
+                                os.remove(fpath)
+                            except Exception:
+                                success = False
+                        removed_rtstruct_uids.add(rs_uid)
+                for imaging_uid in uids_to_delete:
+                    placeholder_rtstructs.pop(imaging_uid, None)
+                for ref, (rs_uid, _) in list(placeholder_rtstructs.items()):
+                    if rs_uid in removed_rtstruct_uids:
+                        placeholder_rtstructs.pop(ref, None)
+            except Exception:
+                success = False
+
+            def finalize():
+                cleanup_status.config(
+                    text="\u2705" if success else "\u274C",
+                    fg="green" if success else "red",
+                )
+                on_get_images()
+
+            root.after(0, finalize)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     btn_cleanup = tk.Button(
         root,
@@ -740,6 +866,26 @@ def main():
             root.after(0, ask_user)
             finished.wait()
             return response["value"]
+
+        def view_registration(*args, **kwargs):
+            """Run the matplotlib viewer on the Tk thread and wait for it to close."""
+
+            finished = threading.Event()
+            payload: dict[str, object] = {}
+
+            def launch():
+                try:
+                    payload["value"] = run_viewer(*args, **kwargs)
+                except Exception as exc:  # pragma: no cover - UI feedback
+                    payload["error"] = exc
+                finally:
+                    finished.set()
+
+            root.after(0, launch)
+            finished.wait()
+            if "error" in payload:
+                raise payload["error"]
+            return payload.get("value")
 
         def finalize_failure(err=None, rejected=False):
             """Update UI and automation flags when registration fails."""
@@ -867,6 +1013,7 @@ def main():
                     moving_modality=bp_modality,
                     confirm_fn=confirm_threadsafe,
                     manual_fine_tuning=(mode == "semi"),
+                    viewer_fn=view_registration,
                 )
             except Exception as exc:
                 root.after(0, lambda: finalize_failure(err=exc))
