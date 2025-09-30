@@ -58,6 +58,8 @@ class ConsoleRedirector:
 
 
 def rename_all_dicom_files(directory_path: str) -> None:
+    """Ensure all DICOM files in *directory_path* have consistent names."""
+
     print(f"{get_datetime()} Renaming DICOM files…")
     with os.scandir(directory_path) as it:
         files = [
@@ -75,7 +77,7 @@ def rename_all_dicom_files(directory_path: str) -> None:
 
 def wait_for_stable_imaging(directory: str, interval: float = 1.0,
                             stable_checks: int = 2) -> dict:
-    """Return imaging series once the number of files stops changing"""
+    """Wait until file count stabilizes before continuing downstream processing."""
     previous_total: int | None = None
     consecutive = 0
     result = {}
@@ -177,6 +179,7 @@ def get_patient_name(directory_path: str) -> str:
 
 
 def main():
+    """Launch the MRgTB preprocessing GUI and initialise automation state."""
     load_environment(".env")
     configure_sitk_threads()
 
@@ -255,9 +258,13 @@ def main():
     }
 
     def automation_log(message: str) -> None:
+        """Emit a timestamped log entry for automation-specific events."""
+
         print(f"{get_datetime()} [Automation] {message}")
 
     def schedule_automation_next(delay_ms: int = 10_000) -> None:
+        """Schedule the next automation iteration with *delay_ms* milliseconds."""
+
         if not automation_state["active"]:
             return
         job = automation_state.get("job")
@@ -266,6 +273,8 @@ def main():
         automation_state["job"] = root.after(delay_ms, automation_loop)
 
     def automation_loop() -> None:
+        """Poll for imaging updates, run registration, and trigger sends."""
+
         if not automation_state["active"]:
             return
 
@@ -337,6 +346,8 @@ def main():
         schedule_automation_next()
 
     def start_full_automation() -> None:
+        """Reset state and kick off the automated workflow."""
+
         if automation_state["active"]:
             return
         automation_state["active"] = True
@@ -353,6 +364,8 @@ def main():
         automation_loop()
 
     def stop_full_automation() -> None:
+        """Cancel pending automation callbacks and clear state flags."""
+
         if not automation_state["active"]:
             return
         automation_state["active"] = False
@@ -366,6 +379,8 @@ def main():
         automation_log("Full automation stopped.")
 
     def toggle_full_automation() -> None:
+        """Enable or disable automation in response to the checkbox state."""
+
         if full_automation_var.get():
             start_full_automation()
         else:
@@ -383,6 +398,8 @@ def main():
     baseplan_status = tk.Label(root, text="", font=("Helvetica", 14))
 
     def on_get_base_plan():
+        """Download the base plan and refresh the base series controls."""
+
         print(f"{get_datetime()} Getting the base plan...")
         start_time = time.time()
         baseplan_status.config(text="\u23F3", fg="orange")  # hourglass
@@ -420,6 +437,8 @@ def main():
     latest_imaging_uids: set[str] = set()
 
     def on_get_images():
+        """Refresh imaging list, creating empty RTSTRUCTs for orphan studies."""
+
         print(f"{get_datetime()} Getting images from {input_dir}...")
         start_time = time.time()
         nonlocal series_info, series_vars, checkbox_texts, references_map, latest_imaging_uids
@@ -459,6 +478,8 @@ def main():
 
             for uid in imaging_uids:
                 if uid not in references:
+                    # Automation expects each imaging series to have an RTSTRUCT; create an
+                    # empty one if none exists so Aria transfers include all images.
                     create_empty_rtstruct(str(input_dir), uid, series_info[uid]["files"])
                     rs_path = os.path.join(str(input_dir), f"RS_{uid}.dcm")
                     try:
@@ -479,6 +500,7 @@ def main():
                     except Exception:
                         pass
 
+            # Remove any RTSTRUCT/REG files that no longer reference available imaging.
             valid_series = set(imaging_uids)
             to_remove = []
             for uid, info in series_info.items():
@@ -619,6 +641,8 @@ def main():
 
     def on_register(mode_override=None, confirm_override=None,
                     triggered_by_automation: bool = False):
+        """Execute the registration workflow and copy structures if successful."""
+
         nonlocal last_rigid_transform, last_fixed_uid, last_moving_uid
         register_status.config(text="\u23F3", fg="orange")
         root.update_idletasks()
@@ -629,6 +653,8 @@ def main():
         try:
 
             def confirm(cost_value, quality_line):
+                """Ask the user to confirm the registration unless overridden."""
+
                 if confirm_override is not None:
                     return confirm_override(cost_value, quality_line)
                 details = [f"Cost: {cost_value:.4f}"]
@@ -692,6 +718,8 @@ def main():
                     gc.disable()
 
                 def worker():
+                    """Copy structures in a worker thread to keep the UI responsive."""
+
                     try:
                         print(f"{get_datetime()} Copying the structures...")
                         copy_structures(
@@ -713,6 +741,8 @@ def main():
                 thread.start()
 
                 def poll_queue():
+                    """Consume progress updates from the worker thread."""
+
                     try:
                         while True:
                             item = progress_q.get_nowait()
@@ -727,6 +757,8 @@ def main():
                     root.after(100, poll_queue)
 
                 def finish():
+                    """Tear down progress UI and update automation state flags."""
+
                     register_progress.grid_remove()
                     if gc_enabled:
                         gc.enable()
@@ -779,6 +811,8 @@ def main():
     send_progress = ttk.Progressbar(root, length=200, mode="determinate")
 
     def on_send_to_aria(selected_uids=None, triggered_by_automation: bool = False):
+        """Send selected series to Aria and track automation-related selections."""
+
         print(f"{get_datetime()} Sending to Aria {input_dir}...")
         start_time = time.time()
         target_set: set[str] = set()
