@@ -95,6 +95,15 @@ def wait_for_stable_imaging(directory: str, interval: float = 1.0,
     return result
 
 
+def ct_already_resampled(directory: str) -> bool:
+    """Return True if the directory already contains resampled CT DICOM slices."""
+
+    for fname in os.listdir(directory):
+        if fname.startswith("CT_Resampled") and fname.lower().endswith(".dcm"):
+            return True
+    return False
+
+
 def find_rtstructs_for_series(directory: str, series_uid: str) -> list[str]:
     """Return paths to RTSTRUCT files in *directory* referencing *series_uid*."""
     matches: list[str] = []
@@ -272,19 +281,17 @@ def main():
             root.after_cancel(job)
         automation_state["job"] = root.after(delay_ms, automation_loop)
 
-    def automation_loop() -> None:
-        """Poll for imaging updates, run registration, and trigger sends."""
+    def automation_after_refresh(success: bool) -> None:
+        """Continue the automation workflow once imaging refresh completes."""
 
         if not automation_state["active"]:
             return
 
-        automation_state["job"] = None
-
-        if automation_state["registration_in_progress"] or automation_state["sending_in_progress"]:
+        if not success:
+            automation_log("Imaging refresh failed. Retrying in 10 seconds.")
             schedule_automation_next()
             return
 
-        on_get_images()
         imaging_now = set(latest_imaging_uids)
 
         if not imaging_now:
@@ -344,6 +351,24 @@ def main():
             return
 
         schedule_automation_next()
+
+    def automation_loop() -> None:
+        """Poll for imaging updates, run registration, and trigger sends."""
+
+        if not automation_state["active"]:
+            return
+
+        automation_state["job"] = None
+
+        if (
+            automation_state["registration_in_progress"]
+            or automation_state["sending_in_progress"]
+            or imaging_refresh_in_progress
+        ):
+            schedule_automation_next()
+            return
+
+        on_get_images(completion_callback=automation_after_refresh)
 
     def start_full_automation() -> None:
         """Reset state and kick off the automated workflow."""
@@ -436,97 +461,41 @@ def main():
     references_map = {}
     latest_imaging_uids: set[str] = set()
 
-    def on_get_images():
+    imaging_refresh_in_progress = False
+
+    def on_get_images(completion_callback=None):
         """Refresh imaging list, creating empty RTSTRUCTs for orphan studies."""
 
         print(f"{get_datetime()} Getting images from {input_dir}...")
         start_time = time.time()
-        nonlocal series_info, series_vars, checkbox_texts, references_map, latest_imaging_uids
+        nonlocal series_info, series_vars, checkbox_texts, references_map
+        nonlocal latest_imaging_uids, imaging_refresh_in_progress
+        if imaging_refresh_in_progress:
+            print(f"{get_datetime()} Imaging refresh already in progress; skipping new request.")
+            if completion_callback:
+                completion_callback(False)
+            return
+
         images_status.config(text="\u23F3", fg="orange")  # hourglass
         root.update_idletasks()
         latest_imaging_uids = set()
-        try:
-            rename_all_dicom_files(str(input_dir))
-            wait_for_stable_imaging(str(input_dir))
-            if check_if_ct_present(str(input_dir)):
-                print(f"{get_datetime()} Resampling sCT...")
-                resample_ct(str(input_dir))
+        imaging_refresh_in_progress = True
 
-            series_info = list_dicom_series(str(input_dir))
-
-            imaging_uids = [
-                uid
-                for uid, info in series_info.items()
-                if info.get("modality") not in ("RTSTRUCT", "REG")
-            ]
-
+        def handle_success(result):
+            nonlocal series_info, series_vars, checkbox_texts, references_map
+            nonlocal latest_imaging_uids, imaging_refresh_in_progress
+            local_series, references, imaging_uids, registration_uids = result
+            series_info = local_series
+            references_map = references
             latest_imaging_uids = set(imaging_uids)
-
-            registration_uids = [
-                uid
-                for uid, info in series_info.items()
-                if info.get("modality") == "REG"
-            ]
-
             display_uids = imaging_uids + registration_uids
 
-            references = {}
-            for uid, info in series_info.items():
-                if info.get("modality") == "RTSTRUCT":
-                    for ref in info.get("references", []):
-                        references.setdefault(ref, []).append(uid)
-
-            for uid in imaging_uids:
-                if uid not in references:
-                    # Automation expects each imaging series to have an RTSTRUCT; create an
-                    # empty one if none exists so Aria transfers include all images.
-                    create_empty_rtstruct(str(input_dir), uid, series_info[uid]["files"])
-                    rs_path = os.path.join(str(input_dir), f"RS_{uid}.dcm")
-                    try:
-                        ds = pydicom.dcmread(rs_path, stop_before_pixels=True, force=True)
-                        new_uid = getattr(ds, "SeriesInstanceUID", None)
-                        date = getattr(ds, "SeriesDate", getattr(ds, "StudyDate", ""))
-                        time_str = getattr(ds, "SeriesTime", getattr(ds, "StudyTime", ""))
-                        desc = getattr(ds, "SeriesDescription", "").strip() or "<no description>"
-                        series_info[new_uid] = {
-                            "date": date,
-                            "time": time_str,
-                            "modality": "RTSTRUCT",
-                            "description": desc,
-                            "files": [rs_path],
-                            "references": [uid],
-                        }
-                        references.setdefault(uid, []).append(new_uid)
-                    except Exception:
-                        pass
-
-            # Remove any RTSTRUCT/REG files that no longer reference available imaging.
-            valid_series = set(imaging_uids)
-            to_remove = []
-            for uid, info in series_info.items():
-                if info.get("modality") in ("RTSTRUCT", "REG"):
-                    refs = set(info.get("references", []))
-                    if refs and not (refs & valid_series):
-                        for fpath in info.get("files", []):
-                            try:
-                                os.remove(fpath)
-                            except Exception:
-                                pass
-                        to_remove.append(uid)
-
-            for uid in to_remove:
-                series_info.pop(uid, None)
-
-            references_map = references
-
-            # Clear previous entries
             for widget in series_frame.winfo_children():
                 widget.destroy()
             series_vars.clear()
             checkbox_texts.clear()
 
             tk.Label(series_frame, text="Series available:").pack(anchor="w")
-            # Populate checkboxes for imaging and REG series
             for uid in display_uids:
                 info = series_info[uid]
                 text = (
@@ -539,14 +508,95 @@ def main():
                 series_vars[uid] = var
                 checkbox_texts[uid] = text
 
-            # Update dropdown after loading
             update_dropdown()
             images_status.config(text="\u2705", fg="green")
             end_time = time.time()
             print(f"{get_datetime()} Getting the images {end_time - start_time:.2f} seconds")
             print(f"{get_datetime()} DONE\n")
-        except Exception:
+            imaging_refresh_in_progress = False
+            if completion_callback:
+                completion_callback(True)
+
+        def handle_failure(err):
+            nonlocal imaging_refresh_in_progress
             images_status.config(text="\u274C", fg="red")
+            print(f"{get_datetime()} Failed to get images: {err}")
+            imaging_refresh_in_progress = False
+            if completion_callback:
+                completion_callback(False)
+
+        def worker():
+            try:
+                wait_for_stable_imaging(str(input_dir))
+                rename_all_dicom_files(str(input_dir))
+                if check_if_ct_present(str(input_dir)) and not ct_already_resampled(str(input_dir)):
+                    print(f"{get_datetime()} Resampling sCT...")
+                    resample_ct(str(input_dir))
+
+                local_series = list_dicom_series(str(input_dir))
+
+                imaging_uids = [
+                    uid
+                    for uid, info in local_series.items()
+                    if info.get("modality") not in ("RTSTRUCT", "REG")
+                ]
+
+                references = {}
+                for uid, info in local_series.items():
+                    if info.get("modality") == "RTSTRUCT":
+                        for ref in info.get("references", []):
+                            references.setdefault(ref, []).append(uid)
+
+                for uid in imaging_uids:
+                    if uid not in references:
+                        create_empty_rtstruct(str(input_dir), uid, local_series[uid]["files"])
+                        rs_path = os.path.join(str(input_dir), f"RS_{uid}.dcm")
+                        try:
+                            ds = pydicom.dcmread(rs_path, stop_before_pixels=True, force=True)
+                            new_uid = getattr(ds, "SeriesInstanceUID", None)
+                            date = getattr(ds, "SeriesDate", getattr(ds, "StudyDate", ""))
+                            time_str = getattr(ds, "SeriesTime", getattr(ds, "StudyTime", ""))
+                            desc = getattr(ds, "SeriesDescription", "").strip() or "<no description>"
+                            local_series[new_uid] = {
+                                "date": date,
+                                "time": time_str,
+                                "modality": "RTSTRUCT",
+                                "description": desc,
+                                "files": [rs_path],
+                                "references": [uid],
+                            }
+                            references.setdefault(uid, []).append(new_uid)
+                        except Exception:
+                            pass
+
+                valid_series = set(imaging_uids)
+                to_remove = []
+                for uid, info in local_series.items():
+                    if info.get("modality") in ("RTSTRUCT", "REG"):
+                        refs = set(info.get("references", []))
+                        if refs and not (refs & valid_series):
+                            for fpath in info.get("files", []):
+                                try:
+                                    os.remove(fpath)
+                                except Exception:
+                                    pass
+                            to_remove.append(uid)
+
+                for uid in to_remove:
+                    local_series.pop(uid, None)
+
+                registration_uids = [
+                    uid
+                    for uid, info in local_series.items()
+                    if info.get("modality") == "REG"
+                ]
+
+                result = (local_series, references, imaging_uids, registration_uids)
+                root.after(0, lambda: handle_success(result))
+            except Exception as err:
+                root.after(0, lambda: handle_failure(err))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     btn_images = tk.Button(root, text="Get imaging", command=on_get_images)
     btn_images.grid(row=6, column=0, sticky="w", padx=10, pady=(0, 5))
