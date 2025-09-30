@@ -241,10 +241,141 @@ def main():
 
     # Full automation checkbox above the base plan button
     full_automation_var = tk.BooleanVar(value=False)
+    automation_state = {
+        "active": False,
+        "job": None,
+        "registration_attempted": False,
+        "registration_completed": False,
+        "registration_successful": False,
+        "registration_in_progress": False,
+        "sending_in_progress": False,
+        "known_imaging_uids": set(),
+        "sent_series_uids": set(),
+        "pending_send_uids": set(),
+    }
+
+    def automation_log(message: str) -> None:
+        print(f"{get_datetime()} [Automation] {message}")
+
+    def schedule_automation_next(delay_ms: int = 10_000) -> None:
+        if not automation_state["active"]:
+            return
+        job = automation_state.get("job")
+        if job is not None:
+            root.after_cancel(job)
+        automation_state["job"] = root.after(delay_ms, automation_loop)
+
+    def automation_loop() -> None:
+        if not automation_state["active"]:
+            return
+
+        automation_state["job"] = None
+
+        if automation_state["registration_in_progress"] or automation_state["sending_in_progress"]:
+            schedule_automation_next()
+            return
+
+        on_get_images()
+        imaging_now = set(latest_imaging_uids)
+
+        if not imaging_now:
+            automation_log("No imaging series available yet. Retrying in 10 seconds.")
+            schedule_automation_next()
+            return
+
+        new_imaging = imaging_now - automation_state["known_imaging_uids"]
+        if new_imaging:
+            automation_log(f"Detected {len(new_imaging)} new imaging series.")
+        automation_state["known_imaging_uids"].update(imaging_now)
+
+        if not automation_state["registration_attempted"]:
+            automation_log("Imaging available. Starting registration.")
+            automation_state["registration_attempted"] = True
+            automation_state["registration_completed"] = False
+            automation_state["registration_successful"] = False
+            automation_state["registration_in_progress"] = True
+            on_register(
+                mode_override="auto",
+                confirm_override=lambda _cost, _quality: True,
+                triggered_by_automation=True,
+            )
+            schedule_automation_next()
+            return
+
+        if not automation_state["registration_completed"]:
+            schedule_automation_next()
+            return
+
+        unsent_imaging = imaging_now - automation_state["sent_series_uids"]
+
+        reg_uids = {
+            uid
+            for uid, info in series_info.items()
+            if info.get("modality") == "REG"
+        }
+
+        if automation_state["registration_successful"]:
+            unsent_regs = reg_uids - automation_state["sent_series_uids"]
+        else:
+            unsent_regs = set()
+
+        if unsent_imaging or unsent_regs:
+            selected_uids = set(unsent_imaging) | set(unsent_regs)
+            automation_log(
+                "Sending series to Aria: "
+                + ", ".join(sorted(selected_uids))
+                if selected_uids
+                else "Sending series to Aria."
+            )
+            on_send_to_aria(
+                selected_uids=selected_uids,
+                triggered_by_automation=True,
+            )
+            schedule_automation_next()
+            return
+
+        schedule_automation_next()
+
+    def start_full_automation() -> None:
+        if automation_state["active"]:
+            return
+        automation_state["active"] = True
+        automation_state["registration_attempted"] = False
+        automation_state["registration_completed"] = False
+        automation_state["registration_successful"] = False
+        automation_state["registration_in_progress"] = False
+        automation_state["sending_in_progress"] = False
+        automation_state["pending_send_uids"] = set()
+        automation_state["known_imaging_uids"] = set()
+        automation_state["sent_series_uids"] = set()
+        automation_log("Starting full automation workflow.")
+        on_get_base_plan()
+        automation_loop()
+
+    def stop_full_automation() -> None:
+        if not automation_state["active"]:
+            return
+        automation_state["active"] = False
+        job = automation_state.get("job")
+        if job is not None:
+            root.after_cancel(job)
+        automation_state["job"] = None
+        automation_state["registration_in_progress"] = False
+        automation_state["sending_in_progress"] = False
+        automation_state["pending_send_uids"] = set()
+        automation_log("Full automation stopped.")
+
+    def toggle_full_automation() -> None:
+        if full_automation_var.get():
+            start_full_automation()
+        else:
+            stop_full_automation()
+
     chk_full_automation = tk.Checkbutton(
         root,
         text="Full automation",
         variable=full_automation_var,
+        command=toggle_full_automation,
     )
     chk_full_automation.grid(row=4, column=0, sticky="w", padx=10, pady=(0, 5))
 
@@ -286,13 +417,15 @@ def main():
     series_vars = {}
     checkbox_texts = {}
     references_map = {}
+    latest_imaging_uids: set[str] = set()
 
     def on_get_images():
         print(f"{get_datetime()} Getting images from {input_dir}...")
         start_time = time.time()
-        nonlocal series_info, series_vars, checkbox_texts, references_map
+        nonlocal series_info, series_vars, checkbox_texts, references_map, latest_imaging_uids
         images_status.config(text="\u23F3", fg="orange")  # hourglass
         root.update_idletasks()
+        latest_imaging_uids = set()
         try:
             rename_all_dicom_files(str(input_dir))
             wait_for_stable_imaging(str(input_dir))
@@ -307,6 +440,8 @@ def main():
                 for uid, info in series_info.items()
                 if info.get("modality") not in ("RTSTRUCT", "REG")
             ]
+
+            latest_imaging_uids = set(imaging_uids)
 
             registration_uids = [
                 uid
@@ -482,13 +617,20 @@ def main():
     last_fixed_uid = None
     last_moving_uid = None
 
-    def on_register():
+    def on_register(mode_override=None, confirm_override=None,
+                    triggered_by_automation: bool = False):
         nonlocal last_rigid_transform, last_fixed_uid, last_moving_uid
         register_status.config(text="\u23F3", fg="orange")
         root.update_idletasks()
+        automation_triggered = triggered_by_automation and automation_state["active"]
+        registration_was_successful = False
+        if automation_triggered:
+            automation_state["registration_in_progress"] = True
         try:
 
             def confirm(cost_value, quality_line):
+                if confirm_override is not None:
+                    return confirm_override(cost_value, quality_line)
                 details = [f"Cost: {cost_value:.4f}"]
                 if quality_line:
                     details.append(quality_line)
@@ -504,9 +646,13 @@ def main():
             bp_uid = bp_default_uid
             bp_modality = bp_default_modality
 
-            mode = ask_registration_mode()
+            mode = mode_override or ask_registration_mode()
             if not mode:
                 register_status.config(text="", fg="orange")
+                if automation_triggered:
+                    automation_state["registration_in_progress"] = False
+                    automation_state["registration_completed"] = True
+                    automation_state["registration_successful"] = False
                 return
 
             try:
@@ -529,6 +675,7 @@ def main():
                 last_fixed_uid = used_fixed_uid
                 last_moving_uid = used_moving_uid
                 register_status.config(text="\u2705", fg="green")
+                registration_was_successful = True
 
                 copy_status.config(text="\u23F3", fg="orange")
                 root.update_idletasks()
@@ -590,20 +737,35 @@ def main():
                         copy_status.config(text="\u274C", fg="red")
                         err = result.get("error")
                         if err:
-                            messagebox.showerror(
-                                "Copy structures",
-                                f"Failed to copy structures: {err}",
-                            )
+                            if automation_triggered:
+                                automation_log(f"Copy structures failed: {err}")
+                            else:
+                                messagebox.showerror(
+                                    "Copy structures",
+                                    f"Failed to copy structures: {err}",
+                                )
+                    if automation_triggered:
+                        automation_state["registration_in_progress"] = False
+                        automation_state["registration_completed"] = True
+                        automation_state["registration_successful"] = registration_was_successful
                     on_get_images()
 
                 poll_queue()
             else:
                 register_status.config(text="\u274C", fg="red")
+                if automation_triggered:
+                    automation_state["registration_in_progress"] = False
+                    automation_state["registration_completed"] = True
+                    automation_state["registration_successful"] = False
         except Exception:
             register_status.config(text="\u274C", fg="red")
+            if automation_triggered:
+                automation_state["registration_in_progress"] = False
+                automation_state["registration_completed"] = True
+                automation_state["registration_successful"] = False
 
 
-    btn_register = tk.Button(root, text="Register", command=on_register)
+    btn_register = tk.Button(root, text="Register", command=lambda: on_register())
     btn_register.grid(row=13, column=0, sticky="w", padx=10, pady=(0, 10))
     register_status.grid(row=13, column=1, sticky="w")
 
@@ -616,9 +778,26 @@ def main():
     send_status = tk.Label(root, text="", font=("Helvetica", 14))
     send_progress = ttk.Progressbar(root, length=200, mode="determinate")
 
-    def on_send_to_aria():
+    def on_send_to_aria(selected_uids=None, triggered_by_automation: bool = False):
         print(f"{get_datetime()} Sending to Aria {input_dir}...")
         start_time = time.time()
+        target_set: set[str] = set()
+        if selected_uids is not None:
+            target_set = set(selected_uids)
+            for uid, var in series_vars.items():
+                var.set(uid in target_set)
+        else:
+            for uid, var in series_vars.items():
+                if var.get():
+                    target_set.add(uid)
+
+        if not target_set:
+            if triggered_by_automation:
+                automation_log("No series selected for Aria; skipping send.")
+            else:
+                messagebox.showinfo("Send to Aria", "No series selected.")
+            return
+
         selected_files = []
         for uid, var in series_vars.items():
             if var.get():
@@ -627,9 +806,17 @@ def main():
                 for rs_uid in references_map.get(uid, []):
                     rs_info = series_info.get(rs_uid, {})
                     selected_files.extend(rs_info.get("files", []))
+
         if not selected_files:
-            messagebox.showinfo("Send to Aria", "No series selected.")
+            if triggered_by_automation:
+                automation_log("No files resolved for selected series; skipping send.")
+            else:
+                messagebox.showinfo("Send to Aria", "No files resolved for selected series.")
             return
+
+        if triggered_by_automation and automation_state["active"]:
+            automation_state["sending_in_progress"] = True
+            automation_state["pending_send_uids"] = set(target_set)
 
         send_status.config(text="\u23F3", fg="orange")
         root.update_idletasks()
@@ -680,14 +867,34 @@ def main():
             end_time = time.time()
             if result.get("success"):
                 send_status.config(text="\u2705", fg="green")
-                messagebox.showinfo("Send to Aria", "Files sent successfully.")
+                if triggered_by_automation:
+                    automation_log("Files sent to Aria successfully.")
+                else:
+                    messagebox.showinfo("Send to Aria", "Files sent successfully.")
             else:
                 send_status.config(text="\u274C", fg="red")
                 err = result.get("error")
                 if err:
-                    messagebox.showerror("Send to Aria", f"Failed to send files: {err}")
+                    if triggered_by_automation:
+                        automation_log(f"Failed to send files: {err}")
+                    else:
+                        messagebox.showerror("Send to Aria", f"Failed to send files: {err}")
                 else:
-                    messagebox.showerror("Send to Aria", "Some files failed to send.")
+                    if triggered_by_automation:
+                        automation_log("Some files failed to send.")
+                    else:
+                        messagebox.showerror("Send to Aria", "Some files failed to send.")
+
+            if triggered_by_automation:
+                automation_state["sending_in_progress"] = False
+                if result.get("success"):
+                    pending = automation_state.get("pending_send_uids", set())
+                    automation_state["sent_series_uids"].update(pending)
+                    for uid in list(pending):
+                        for rs_uid in references_map.get(uid, []):
+                            automation_state["sent_series_uids"].add(rs_uid)
+                automation_state["pending_send_uids"] = set()
+
             print(f"{get_datetime()} Sending finished in {end_time - start_time:.2f} seconds")
             print(f"{get_datetime()} DONE\n")
             on_get_images()
