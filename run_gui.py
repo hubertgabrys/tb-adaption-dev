@@ -647,10 +647,10 @@ def main():
     cleanup_status.grid(row=18, column=1, sticky="w", pady=(50, 10))
 
     # Dropdown menu for registration series
-    selected_var = tk.StringVar()
-    selection_map = {}
+    selected_label_var = tk.StringVar()
+    selected_uid_var = tk.StringVar()
     tk.Label(root, text="Select Daily Series for Registration").grid(row=11, column=0, columnspan=2, sticky="w", padx=10)
-    dropdown = tk.OptionMenu(root, selected_var, '')
+    dropdown = tk.OptionMenu(root, selected_label_var, '')
     dropdown.grid(row=12, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
     # Register button
@@ -698,41 +698,166 @@ def main():
         root.update_idletasks()
         automation_triggered = triggered_by_automation and automation_state["active"]
         registration_was_successful = False
+
         if automation_triggered:
             automation_state["registration_in_progress"] = True
-        try:
 
-            def confirm(cost_value, quality_line):
-                """Ask the user to confirm the registration unless overridden."""
+        selected_uid = selected_uid_var.get() or None
+        selected_info = series_info.get(selected_uid, {})
+        selected_modality = selected_info.get("modality")
 
-                if confirm_override is not None:
-                    return confirm_override(cost_value, quality_line)
-                details = [f"Cost: {cost_value:.4f}"]
-                if quality_line:
-                    details.append(quality_line)
-                msg = "Accept registration result?\n" + "\n".join(details)
-                return messagebox.askyesno("Registration", msg)
+        bp_uid = bp_default_uid
+        bp_modality = bp_default_modality
 
-            # Determine which series the user selected in the dropdowns
-            selected_label = selected_var.get()
-            selected_uid = selection_map.get(selected_label)
-            selected_info = series_info.get(selected_uid, {})
-            selected_modality = selected_info.get("modality")
+        mode = mode_override or ask_registration_mode()
+        if not mode:
+            register_status.config(text="", fg="orange")
+            if automation_triggered:
+                automation_state["registration_in_progress"] = False
+                automation_state["registration_completed"] = True
+                automation_state["registration_successful"] = False
+            return
 
-            bp_uid = bp_default_uid
-            bp_modality = bp_default_modality
+        def confirm_threadsafe(cost_value, quality_line):
+            """Invoke the confirmation dialog on the Tk thread."""
 
-            mode = mode_override or ask_registration_mode()
-            if not mode:
-                register_status.config(text="", fg="orange")
+            if confirm_override is not None:
+                return confirm_override(cost_value, quality_line)
+
+            response = {"value": False}
+            finished = threading.Event()
+
+            def ask_user():
+                try:
+                    details = [f"Cost: {cost_value:.4f}"]
+                    if quality_line:
+                        details.append(quality_line)
+                    msg = "Accept registration result?\n" + "\n".join(details)
+                    response["value"] = messagebox.askyesno("Registration", msg)
+                finally:
+                    finished.set()
+
+            root.after(0, ask_user)
+            finished.wait()
+            return response["value"]
+
+        def finalize_failure(err=None, rejected=False):
+            """Update UI and automation flags when registration fails."""
+
+            register_status.config(text="\u274C", fg="red")
+            if rejected and not automation_triggered:
+                messagebox.showinfo("Registration", "Registration was rejected.")
+            elif err and not automation_triggered:
+                messagebox.showerror("Registration", f"Registration failed: {err}")
+            if automation_triggered:
+                if err:
+                    automation_log(f"Registration failed: {err}")
+                elif rejected:
+                    automation_log("Registration rejected.")
+                automation_state["registration_in_progress"] = False
+                automation_state["registration_completed"] = True
+                automation_state["registration_successful"] = False
+
+        def handle_registration_result(result):
+            """Process the registration outcome on the Tk thread."""
+
+            nonlocal last_rigid_transform, last_fixed_uid, last_moving_uid, registration_was_successful
+            rigid_transform, _, used_fixed_uid, used_moving_uid = result
+            if not rigid_transform:
+                finalize_failure(rejected=True)
+                return
+
+            registration_was_successful = True
+            last_rigid_transform = rigid_transform
+            last_fixed_uid = used_fixed_uid
+            last_moving_uid = used_moving_uid
+            register_status.config(text="\u2705", fg="green")
+
+            copy_status.config(text="\u23F3", fg="orange")
+            root.update_idletasks()
+            register_progress["value"] = 0
+            register_progress.grid()
+            progress_q = queue.Queue()
+            result_state = {"success": False, "error": None}
+
+            def progress_cb(idx, total):
+                progress_q.put((idx, total))
+
+            gc_enabled = gc.isenabled()
+            if gc_enabled:
+                gc.disable()
+
+            def copy_worker():
+                try:
+                    print(f"{get_datetime()} Copying the structures...")
+                    copy_structures(
+                        str(input_dir),
+                        patient_id,
+                        rtplan_label,
+                        rigid_transform,
+                        series_uid=used_fixed_uid,
+                        base_series_uid=used_moving_uid,
+                        progress_callback=progress_cb,
+                    )
+                    result_state["success"] = True
+                except Exception as exc:
+                    result_state["error"] = exc
+                finally:
+                    progress_q.put(None)
+
+            threading.Thread(target=copy_worker, daemon=True).start()
+
+            def poll_queue():
+                try:
+                    while True:
+                        item = progress_q.get_nowait()
+                        if item is None:
+                            finish_copy()
+                            return
+                        idx, total = item
+                        register_progress["maximum"] = total
+                        register_progress["value"] = idx
+                except queue.Empty:
+                    pass
+                root.after(100, poll_queue)
+
+            def finish_copy():
+                register_progress.grid_remove()
+                if gc_enabled:
+                    gc.enable()
+                    gc.collect()
+                if result_state.get("success"):
+                    copy_status.config(text="\u2705", fg="green")
+                else:
+                    copy_status.config(text="\u274C", fg="red")
+                    err = result_state.get("error")
+                    if err:
+                        if automation_triggered:
+                            automation_log(f"Copy structures failed: {err}")
+                        else:
+                            messagebox.showerror(
+                                "Copy structures",
+                                f"Failed to copy structures: {err}",
+                            )
+                    else:
+                        if automation_triggered:
+                            automation_log("Some structures failed to copy.")
+                        else:
+                            messagebox.showerror(
+                                "Copy structures",
+                                "Some structures failed to copy.",
+                            )
                 if automation_triggered:
                     automation_state["registration_in_progress"] = False
                     automation_state["registration_completed"] = True
-                    automation_state["registration_successful"] = False
-                return
+                    automation_state["registration_successful"] = registration_was_successful
+                on_get_images()
 
+            poll_queue()
+
+        def worker():
             try:
-                rigid_transform, _, used_fixed_uid, used_moving_uid = perform_registration(
+                result = perform_registration(
                     str(input_dir),
                     patient_id,
                     rtplan_label,
@@ -740,111 +865,16 @@ def main():
                     selected_modality=selected_modality,
                     moving_series_uid=bp_uid,
                     moving_modality=bp_modality,
-                    confirm_fn=confirm,
+                    confirm_fn=confirm_threadsafe,
                     manual_fine_tuning=(mode == "semi"),
                 )
-            except Exception:
-                rigid_transform, used_fixed_uid, used_moving_uid = None, None, None
+            except Exception as exc:
+                root.after(0, lambda: finalize_failure(err=exc))
+                return
 
-            if rigid_transform:
-                last_rigid_transform = rigid_transform
-                last_fixed_uid = used_fixed_uid
-                last_moving_uid = used_moving_uid
-                register_status.config(text="\u2705", fg="green")
-                registration_was_successful = True
+            root.after(0, lambda: handle_registration_result(result))
 
-                copy_status.config(text="\u23F3", fg="orange")
-                root.update_idletasks()
-                register_progress["value"] = 0
-                register_progress.grid()
-                progress_q = queue.Queue()
-                result = {"success": False, "error": None}
-
-                def progress_cb(idx, total):
-                    progress_q.put((idx, total))
-
-                gc_enabled = gc.isenabled()
-                if gc_enabled:
-                    gc.disable()
-
-                def worker():
-                    """Copy structures in a worker thread to keep the UI responsive."""
-
-                    try:
-                        print(f"{get_datetime()} Copying the structures...")
-                        copy_structures(
-                            str(input_dir),
-                            patient_id,
-                            rtplan_label,
-                            rigid_transform,
-                            series_uid=used_fixed_uid,
-                            base_series_uid=used_moving_uid,
-                            progress_callback=progress_cb,
-                        )
-                        result["success"] = True
-                    except Exception as exc:
-                        result["error"] = exc
-                    finally:
-                        progress_q.put(None)
-
-                thread = threading.Thread(target=worker, daemon=True)
-                thread.start()
-
-                def poll_queue():
-                    """Consume progress updates from the worker thread."""
-
-                    try:
-                        while True:
-                            item = progress_q.get_nowait()
-                            if item is None:
-                                finish()
-                                return
-                            idx, total = item
-                            register_progress["maximum"] = total
-                            register_progress["value"] = idx
-                    except queue.Empty:
-                        pass
-                    root.after(100, poll_queue)
-
-                def finish():
-                    """Tear down progress UI and update automation state flags."""
-
-                    register_progress.grid_remove()
-                    if gc_enabled:
-                        gc.enable()
-                        gc.collect()
-                    if result.get("success"):
-                        copy_status.config(text="\u2705", fg="green")
-                    else:
-                        copy_status.config(text="\u274C", fg="red")
-                        err = result.get("error")
-                        if err:
-                            if automation_triggered:
-                                automation_log(f"Copy structures failed: {err}")
-                            else:
-                                messagebox.showerror(
-                                    "Copy structures",
-                                    f"Failed to copy structures: {err}",
-                                )
-                    if automation_triggered:
-                        automation_state["registration_in_progress"] = False
-                        automation_state["registration_completed"] = True
-                        automation_state["registration_successful"] = registration_was_successful
-                    on_get_images()
-
-                poll_queue()
-            else:
-                register_status.config(text="\u274C", fg="red")
-                if automation_triggered:
-                    automation_state["registration_in_progress"] = False
-                    automation_state["registration_completed"] = True
-                    automation_state["registration_successful"] = False
-        except Exception:
-            register_status.config(text="\u274C", fg="red")
-            if automation_triggered:
-                automation_state["registration_in_progress"] = False
-                automation_state["registration_completed"] = True
-                automation_state["registration_successful"] = False
+        threading.Thread(target=worker, daemon=True).start()
 
 
     btn_register = tk.Button(root, text="Register", command=lambda: on_register())
@@ -991,11 +1021,16 @@ def main():
     send_progress.grid(row=17, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
     send_progress.grid_remove()
 
+    def set_selected_series(uid, label):
+        """Update the dropdown selection variables with *uid* and *label*."""
+
+        selected_uid_var.set(uid or "")
+        selected_label_var.set(label)
+
     def update_dropdown(*args):
-        # show CT and MR series in the dropdown for the fixed image
+        # show MR series in the dropdown for the fixed image
         menu = dropdown["menu"]
         menu.delete(0, 'end')
-        selection_map.clear()
         filtered_uids = [
             uid
             for uid, info in series_info.items()
@@ -1006,18 +1041,22 @@ def main():
                #         or info.get('description', '').endswith('dixon_tra_Siemens_in')
                # )
         ]
+
         for uid in filtered_uids:
             info = series_info[uid]
             text = checkbox_texts.get(uid, info['description'])
-            selection_map[text] = uid
-            menu.add_command(label=text, command=tk._setit(selected_var, text))
 
-        # Default to first label
+            def callback(value=uid, label=text):
+                set_selected_series(value, label)
+
+            menu.add_command(label=text, command=callback)
+
         if filtered_uids:
             first_uid = filtered_uids[0]
-            selected_var.set(checkbox_texts.get(first_uid, series_info[first_uid]['description']))
+            first_label = checkbox_texts.get(first_uid, series_info[first_uid]['description'])
+            set_selected_series(first_uid, first_label)
         else:
-            selected_var.set('')
+            set_selected_series(None, '')
 
     def update_bp_selection():
         nonlocal bp_default_uid, bp_default_modality
