@@ -9,7 +9,6 @@ import SimpleITK as sitk
 import matplotlib.pyplot as plt
 import numpy as np
 import pydicom
-import sys
 from matplotlib.widgets import Slider
 from pydicom.dataset import Dataset, FileDataset
 from pydicom.sequence import Sequence
@@ -391,26 +390,6 @@ def crop_image_to_body(image, patient_id, rtplan_label, margin=0):
     return extractor.Execute(image)
 
 
-def crop_image_to_threshold(image, threshold=100, margin=0):
-    """Crop *image* to bounding box of voxels with intensity > *threshold*."""
-    binary = sitk.BinaryThreshold(
-        image, lowerThreshold=threshold, upperThreshold=sys.maxsize,
-        insideValue=1, outsideValue=0)
-    stats = sitk.LabelShapeStatisticsImageFilter()
-    stats.Execute(binary)
-    if not stats.GetLabels():
-        print(f"{get_datetime()} No voxels above threshold {threshold}")
-        return image
-    x, y, z, sx, sy, sz = stats.GetBoundingBox(1)
-    start = [max(0, int(v - margin)) for v in (x, y, z)]
-    end = [min(image.GetSize()[i] - 1, int(start[i] + [sx, sy, sz][i] - 1 + margin * 2)) for i in range(3)]
-    extract_size = [end[i] - start[i] + 1 for i in range(3)]
-    extractor = sitk.ExtractImageFilter()
-    extractor.SetIndex(start)
-    extractor.SetSize(extract_size)
-    return extractor.Execute(image)
-
-
 def resample_to_isotropic(img: sitk.Image, modality,
                           new_spacing=(1.5, 1.5, 1.5),
                           interpolator=sitk.sitkLinear) -> sitk.Image:
@@ -479,18 +458,6 @@ def winsorize_and_rescale(img: sitk.Image, mask: sitk.Image, low_q: float = 1.0,
     hi = float(hi if hi > lo else lo + 1e-3)
     img = sitk.Clamp(img, lowerBound=lo, upperBound=hi)
     return sitk.RescaleIntensity(img, 0.0, 1.0)
-
-def n4_correct_mri(img: sitk.Image, mask: sitk.Image) -> sitk.Image:
-    """
-    N4 bias-field correction for MR images. Expects non-negative input.
-    """
-    corrector = sitk.N4BiasFieldCorrectionImageFilter()
-    mask = sitk.Cast(mask, sitk.sitkUInt8)
-    corrected = corrector.Execute(img, mask)
-    return corrected
-
-# -----------------------------------------------------------
-
 
 def calc_mutual_information(fixed_image,
                             moving_image,
@@ -561,25 +528,6 @@ def calc_mutual_information(fixed_image,
     h_moving = _entropy(p_y)
     return mi, h_fixed, h_moving
 
-
-def estimate_initial_transform_manual(fixed_image, moving_image):
-    """Estimate an initial rigid transform using SimpleITK."""
-    origin_f = np.array(fixed_image.GetOrigin())
-    origin_m = np.array(moving_image.GetOrigin())
-    spacing_f = np.array(fixed_image.GetSpacing())
-    spacing_m = np.array(moving_image.GetSpacing())
-    size_f    = np.array(fixed_image.GetSize())
-    size_m    = np.array(moving_image.GetSize())
-
-    center_f = origin_f + (size_f - 1) * spacing_f / 2.0
-    center_m = origin_m + (size_m - 1) * spacing_m / 2.0
-
-    offset = center_m - center_f
-
-    tx = sitk.TranslationTransform(3)
-    tx.SetOffset(tuple(offset))
-    print(f"{get_datetime()} Initial transform: {[round(e,2) for e in offset]} mm")
-    return tx
 
 def perform_initial_registration(fixed_image, moving_image):
     initial_tx = sitk.CenteredTransformInitializer(
