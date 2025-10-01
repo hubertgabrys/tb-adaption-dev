@@ -423,9 +423,21 @@ def main():
             automation_state["registration_completed"] = False
             automation_state["registration_successful"] = False
             automation_state["registration_in_progress"] = True
+            def automation_confirm(cost_value: float, quality_line: str) -> bool:
+                """Ask the user to accept the automated registration result."""
+
+                def ask_user():
+                    details = [f"Cost: {cost_value:.4f}"]
+                    if quality_line:
+                        details.append(quality_line)
+                    details.append("Rejecting will stop full automation.")
+                    msg = "Accept registration result?\n" + "\n".join(details)
+                    return messagebox.askyesno("Registration", msg)
+
+                return run_on_tk_thread(ask_user, wait=True)
             on_register(
                 mode_override="auto",
-                confirm_override=lambda _cost, _quality: True,
+                confirm_override=automation_confirm,
                 triggered_by_automation=True,
             )
             schedule_automation_next()
@@ -501,10 +513,12 @@ def main():
         on_get_base_plan()
         automation_loop()
 
-    def stop_full_automation() -> None:
+    def stop_full_automation(*, from_internal: bool = False) -> None:
         """Cancel pending automation callbacks and clear state flags."""
 
         if not automation_state["active"]:
+            if from_internal and full_automation_var.get():
+                full_automation_var.set(False)
             return
         automation_state["active"] = False
         job = automation_state.get("job")
@@ -515,6 +529,8 @@ def main():
         automation_state["sending_in_progress"] = False
         automation_state["pending_send_uids"] = set()
         automation_log("Full automation stopped.")
+        if from_internal and full_automation_var.get():
+            full_automation_var.set(False)
 
     def toggle_full_automation() -> None:
         """Enable or disable automation in response to the checkbox state."""
@@ -948,7 +964,8 @@ def main():
                 if err:
                     automation_log(f"Registration failed: {err}")
                 elif rejected:
-                    automation_log("Registration rejected.")
+                    automation_log("Registration rejected. Stopping automation.")
+                    stop_full_automation(from_internal=True)
                 automation_state["registration_in_progress"] = False
                 automation_state["registration_completed"] = True
                 automation_state["registration_successful"] = False
