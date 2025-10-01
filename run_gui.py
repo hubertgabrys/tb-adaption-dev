@@ -384,7 +384,7 @@ def main():
 
         print(f"{get_datetime()} [Automation] {message}")
 
-    def schedule_automation_next(delay_ms: int = 10_000) -> None:
+    def schedule_automation_next(delay_ms: int = 5_000) -> None:
         """Schedule the next automation iteration with *delay_ms* milliseconds."""
 
         if not automation_state["active"]:
@@ -401,14 +401,14 @@ def main():
             return
 
         if not success:
-            automation_log("Imaging refresh failed. Retrying in 10 seconds.")
+            automation_log("Imaging refresh failed. Retrying in 5 seconds.")
             schedule_automation_next()
             return
 
         imaging_now = set(latest_imaging_uids)
 
         if not imaging_now:
-            automation_log("No imaging series available yet. Retrying in 10 seconds.")
+            automation_log("No imaging series available yet. Retrying in 5 seconds.")
             schedule_automation_next()
             return
 
