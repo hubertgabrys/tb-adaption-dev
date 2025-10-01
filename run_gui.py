@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import traceback
 import tkinter as tk
 from tkinter.scrolledtext import ScrolledText
 from pathlib import Path
@@ -278,6 +279,51 @@ def main():
 
     root = tk.Tk()
     root.title("MRgTB Preprocessing")
+
+    # Queue used to marshal callbacks from worker threads back to Tk safely.
+    tk_call_queue: queue.Queue = queue.Queue()
+
+    def run_on_tk_thread(func, *args, wait: bool = False, **kwargs):
+        """Execute *func* on the Tk thread, optionally waiting for the result."""
+
+        if threading.current_thread() is threading.main_thread():
+            return func(*args, **kwargs)
+
+        payload = {} if wait else None
+        event = threading.Event() if wait else None
+        tk_call_queue.put((func, args, kwargs, event, payload))
+        if wait:
+            event.wait()
+            if payload and "error" in payload:
+                raise payload["error"]
+            return payload.get("result") if payload else None
+        return None
+
+    def process_tk_queue():
+        """Drain any pending cross-thread Tk operations."""
+
+        while True:
+            try:
+                func, args, kwargs, event, payload = tk_call_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                result = func(*args, **kwargs)
+                if payload is not None:
+                    payload["result"] = result
+            except Exception as exc:  # pragma: no cover - surfaces in GUI console
+                if payload is not None:
+                    payload["error"] = exc
+                else:
+                    print(f"{get_datetime()} Error executing Tk callback: {exc}")
+                    traceback.print_exc()
+            finally:
+                if event is not None:
+                    event.set()
+        root.after(20, process_tk_queue)
+
+    # Kick off the polling loop so worker threads can post results immediately.
+    process_tk_queue()
 
     # Configure grid to accommodate console on the right
     root.grid_columnconfigure(2, weight=1)
@@ -705,9 +751,9 @@ def main():
                 ]
 
                 result = (local_series, references, imaging_uids, registration_uids)
-                root.after(0, lambda: handle_success(result))
+                run_on_tk_thread(handle_success, result)
             except Exception as err:
-                root.after(0, lambda error=err: handle_failure(error))
+                run_on_tk_thread(handle_failure, err)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -766,7 +812,7 @@ def main():
                 )
                 on_get_images()
 
-            root.after(0, finalize)
+            run_on_tk_thread(finalize)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -858,42 +904,22 @@ def main():
             if confirm_override is not None:
                 return confirm_override(cost_value, quality_line)
 
-            response = {"value": False}
-            finished = threading.Event()
-
             def ask_user():
-                try:
-                    details = [f"Cost: {cost_value:.4f}"]
-                    if quality_line:
-                        details.append(quality_line)
-                    msg = "Accept registration result?\n" + "\n".join(details)
-                    response["value"] = messagebox.askyesno("Registration", msg)
-                finally:
-                    finished.set()
+                details = [f"Cost: {cost_value:.4f}"]
+                if quality_line:
+                    details.append(quality_line)
+                msg = "Accept registration result?\n" + "\n".join(details)
+                return messagebox.askyesno("Registration", msg)
 
-            root.after(0, ask_user)
-            finished.wait()
-            return response["value"]
+            return run_on_tk_thread(ask_user, wait=True)
 
         def view_registration(*args, **kwargs):
             """Run the matplotlib viewer on the Tk thread and wait for it to close."""
 
-            finished = threading.Event()
-            payload: dict[str, object] = {}
-
             def launch():
-                try:
-                    payload["value"] = run_viewer(*args, **kwargs)
-                except Exception as exc:  # pragma: no cover - UI feedback
-                    payload["error"] = exc
-                finally:
-                    finished.set()
+                return run_viewer(*args, **kwargs)
 
-            root.after(0, launch)
-            finished.wait()
-            if "error" in payload:
-                raise payload["error"]
-            return payload.get("value")
+            return run_on_tk_thread(launch, wait=True)
 
         def finalize_failure(err=None, rejected=False):
             """Update UI and automation flags when registration fails."""
@@ -1024,10 +1050,10 @@ def main():
                     viewer_fn=view_registration,
                 )
             except Exception as exc:
-                root.after(0, lambda: finalize_failure(err=exc))
+                run_on_tk_thread(finalize_failure, err=exc)
                 return
 
-            root.after(0, lambda: handle_registration_result(result))
+            run_on_tk_thread(handle_registration_result, result)
 
         threading.Thread(target=worker, daemon=True).start()
 
