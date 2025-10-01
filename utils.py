@@ -48,6 +48,15 @@ def load_environment(env_file_path: str = ".env"):
     load_dotenv(dotenv_path)
 
 
+def require_env(var_name: str) -> str:
+    """Return the value of *var_name* or raise if the environment is missing it."""
+
+    value = os.environ.get(var_name)
+    if value is None or value == "":
+        raise EnvironmentError(f"Environment variable '{var_name}' must be set")
+    return value
+
+
 def configure_sitk_threads():
     """Configure SimpleITK to use all CPU cores."""
     try:
