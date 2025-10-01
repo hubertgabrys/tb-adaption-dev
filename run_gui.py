@@ -662,7 +662,7 @@ def main():
                     if not os.path.exists(path):
                         placeholder_rtstructs.pop(ref, None)
 
-                real_rtstruct_refs: set[str] = set()
+                real_rtstruct_refs: dict[str, str] = {}
                 for uid, info in list(local_series.items()):
                     if info.get("modality") != "RTSTRUCT":
                         continue
@@ -676,19 +676,25 @@ def main():
                         else:
                             entry_is_placeholder = False
                     if not entry_is_placeholder:
-                        real_rtstruct_refs.update(refs)
+                        for ref in refs:
+                            real_rtstruct_refs[ref] = uid
 
-                for ref in list(real_rtstruct_refs):
+                for ref, real_uid in list(real_rtstruct_refs.items()):
                     placeholder_entry = placeholder_rtstructs.pop(ref, None)
                     if not placeholder_entry:
                         continue
                     placeholder_uid, placeholder_path = placeholder_entry
-                    if placeholder_path and os.path.exists(placeholder_path):
-                        try:
-                            os.remove(placeholder_path)
-                        except Exception:
-                            pass
-                    local_series.pop(placeholder_uid, None)
+                    if placeholder_uid != real_uid:
+                        if placeholder_path and os.path.exists(placeholder_path):
+                            real_files = set(
+                                local_series.get(real_uid, {}).get("files", [])
+                            )
+                            if placeholder_path not in real_files:
+                                try:
+                                    os.remove(placeholder_path)
+                                except Exception:
+                                    pass
+                        local_series.pop(placeholder_uid, None)
 
                 imaging_uids = [
                     uid
