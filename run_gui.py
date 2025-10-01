@@ -595,6 +595,10 @@ def main():
 
         def worker():
             try:
+                if not input_dir.exists():
+                    raise FileNotFoundError(
+                        f"Input directory '{input_dir}' does not exist"
+                    )
                 wait_for_stable_imaging(str(input_dir))
                 rename_all_dicom_files(str(input_dir))
                 if check_if_ct_present(str(input_dir)) and not ct_already_resampled(str(input_dir)):
@@ -602,6 +606,10 @@ def main():
                     resample_ct(str(input_dir))
 
                 local_series = list_dicom_series(str(input_dir))
+                if not local_series:
+                    raise RuntimeError(
+                        f"No imaging series found in '{input_dir}'."
+                    )
 
                 # Drop stale placeholder bookkeeping when the files vanish.
                 for ref, (_, path) in list(placeholder_rtstructs.items()):
@@ -699,7 +707,7 @@ def main():
                 result = (local_series, references, imaging_uids, registration_uids)
                 root.after(0, lambda: handle_success(result))
             except Exception as err:
-                root.after(0, lambda: handle_failure(err))
+                root.after(0, lambda error=err: handle_failure(error))
 
         threading.Thread(target=worker, daemon=True).start()
 
