@@ -553,8 +553,10 @@ def tune_initial_registration(
         translationTx = sitk.TranslationTransform(3)
         translationTx.SetOffset(transform.GetTranslation())
         registration_method = sitk.ImageRegistrationMethod()
-        registration_method.SetMetricAsMattesMutualInformation(50)
-        registration_method.SetOptimizerAsExhaustive(numberOfSteps=[2, 2, 1], stepLength=20)
+        registration_method.SetMetricAsMattesMutualInformation(25)
+        registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
+        registration_method.SetMetricSamplingPercentage(0.05, seed=42)  # 5% of voxels
+        registration_method.SetOptimizerAsExhaustive(numberOfSteps=[3, 3, 3], stepLength=10)
         registration_method.SetInitialTransform(translationTx)
         registration_method.SetInterpolator(sitk.sitkLinear)
         auto_translation = registration_method.Execute(fixed_image, moving_image)
