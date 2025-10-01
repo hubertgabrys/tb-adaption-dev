@@ -3,8 +3,11 @@ import sys
 import time
 import traceback
 import tkinter as tk
-from tkinter.scrolledtext import ScrolledText
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Callable, Optional
+
+from tkinter.scrolledtext import ScrolledText
 
 import pydicom
 
@@ -75,6 +78,93 @@ class ConsoleRedirector:
 
     def flush(self) -> None:
         pass
+
+
+@dataclass
+class RefreshResult:
+    """Container describing the outcome of an imaging refresh."""
+
+    series: dict[str, dict[str, Any]]
+    references: dict[str, list[str]]
+    imaging_uids: list[str]
+    registration_uids: list[str]
+    placeholder_map: dict[str, tuple[str, str]]
+
+
+class TkThreadExecutor:
+    """Bridge worker threads with Tk's single-threaded event loop."""
+
+    def __init__(self, root: tk.Misc, poll_interval: int = 20):
+        self.root = root
+        self.poll_interval = poll_interval
+        self._queue: "queue.Queue[tuple[Callable[..., Any], tuple[Any, ...], dict[str, Any], Optional[threading.Event], Optional[dict[str, Any]]]]" = queue.Queue()
+        self.root.after(self.poll_interval, self._process_queue)
+
+    def call(self, func: Callable[..., Any], *args: Any, wait: bool = False, **kwargs: Any) -> Any:
+        """Schedule *func* to run on the Tk thread."""
+
+        if threading.current_thread() is threading.main_thread():
+            return func(*args, **kwargs)
+
+        payload: Optional[dict[str, Any]] = {} if wait else None
+        event = threading.Event() if wait else None
+        self._queue.put((func, args, kwargs, event, payload))
+        if wait and event is not None and payload is not None:
+            event.wait()
+            if "error" in payload:
+                raise payload["error"]
+            return payload.get("result")
+        return None
+
+    def run_in_thread(
+        self,
+        func: Callable[[], Any],
+        *,
+        on_success: Optional[Callable[[Any], None]] = None,
+        on_error: Optional[Callable[[Exception], None]] = None,
+    ) -> None:
+        """Execute *func* in a worker thread and report back on the Tk thread."""
+
+        def worker() -> None:
+            try:
+                result = func()
+            except Exception as exc:  # pragma: no cover - surfaced via GUI console
+                if on_error is not None:
+                    self.call(on_error, exc)
+                else:
+                    self.call(self._log_background_error, exc)
+                return
+
+            if on_success is not None:
+                self.call(on_success, result)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _process_queue(self) -> None:
+        while True:
+            try:
+                func, args, kwargs, event, payload = self._queue.get_nowait()
+            except queue.Empty:
+                break
+
+            try:
+                result = func(*args, **kwargs)
+                if payload is not None:
+                    payload["result"] = result
+            except Exception as exc:  # pragma: no cover - surfaced via GUI console
+                if payload is not None:
+                    payload["error"] = exc
+                else:
+                    self._log_background_error(exc)
+            finally:
+                if event is not None:
+                    event.set()
+
+        self.root.after(self.poll_interval, self._process_queue)
+
+    def _log_background_error(self, exc: Exception) -> None:
+        print(f"{get_datetime()} Error executing Tk callback: {exc}")
+        traceback.print_exc()
 
 
 def _is_placeholder_rtstruct(path: str) -> bool:
@@ -246,6 +336,134 @@ def get_patient_name(directory_path: str) -> str:
     return ""
 
 
+def refresh_imaging_series(
+    input_dir: Path,
+    existing_placeholders: dict[str, tuple[str, str]],
+) -> RefreshResult:
+    """Collect imaging metadata and maintain placeholder RTSTRUCTs."""
+
+    if not input_dir.exists():
+        raise FileNotFoundError(f"Input directory '{input_dir}' does not exist")
+
+    wait_for_stable_imaging(str(input_dir))
+    rename_all_dicom_files(str(input_dir))
+
+    if check_if_ct_present(str(input_dir)) and not ct_already_resampled(str(input_dir)):
+        print(f"{get_datetime()} Resampling sCT...")
+        resample_ct(str(input_dir))
+
+    local_series = list_dicom_series(str(input_dir))
+    if not local_series:
+        raise RuntimeError(f"No imaging series found in '{input_dir}'.")
+
+    placeholder_map: dict[str, tuple[str, str]] = {}
+    for ref, (uid, path) in existing_placeholders.items():
+        if path and os.path.exists(path):
+            placeholder_map[ref] = (uid, path)
+
+    real_rtstruct_refs: dict[str, str] = {}
+    for uid, info in list(local_series.items()):
+        if info.get("modality") != "RTSTRUCT":
+            continue
+        refs = info.get("references", []) or []
+        files = info.get("files", []) or []
+        entry_is_placeholder = True
+        for fpath in files:
+            if _is_placeholder_rtstruct(fpath):
+                for ref in refs:
+                    placeholder_map[ref] = (uid, fpath)
+            else:
+                entry_is_placeholder = False
+        if not entry_is_placeholder:
+            for ref in refs:
+                real_rtstruct_refs[ref] = uid
+
+    for ref, real_uid in list(real_rtstruct_refs.items()):
+        placeholder_entry = placeholder_map.pop(ref, None)
+        if not placeholder_entry:
+            continue
+        placeholder_uid, placeholder_path = placeholder_entry
+        if placeholder_uid != real_uid:
+            if placeholder_path and os.path.exists(placeholder_path):
+                real_files = set(local_series.get(real_uid, {}).get("files", []))
+                if placeholder_path not in real_files:
+                    try:
+                        os.remove(placeholder_path)
+                    except Exception:
+                        pass
+            local_series.pop(placeholder_uid, None)
+
+    imaging_uids = [
+        uid
+        for uid, info in local_series.items()
+        if info.get("modality") not in ("RTSTRUCT", "REG")
+    ]
+
+    references: dict[str, list[str]] = {}
+    for uid, info in local_series.items():
+        if info.get("modality") == "RTSTRUCT":
+            for ref in info.get("references", []) or []:
+                references.setdefault(ref, []).append(uid)
+
+    for uid in imaging_uids:
+        if uid in references:
+            continue
+        create_empty_rtstruct(str(input_dir), uid, local_series[uid]["files"])
+        rs_path = os.path.join(str(input_dir), f"RS_{uid}.dcm")
+        try:
+            ds = pydicom.dcmread(rs_path, stop_before_pixels=True, force=True)
+        except Exception:
+            continue
+        new_uid = getattr(ds, "SeriesInstanceUID", None)
+        date = getattr(ds, "SeriesDate", getattr(ds, "StudyDate", ""))
+        time_str = getattr(ds, "SeriesTime", getattr(ds, "StudyTime", ""))
+        desc = getattr(ds, "SeriesDescription", "").strip() or "<no description>"
+        local_series[new_uid] = {
+            "date": date,
+            "time": time_str,
+            "modality": "RTSTRUCT",
+            "description": desc,
+            "files": [rs_path],
+            "references": [uid],
+        }
+        references.setdefault(uid, []).append(new_uid)
+        placeholder_map[uid] = (new_uid, rs_path)
+
+    valid_series = set(imaging_uids)
+    to_remove = []
+    for uid, info in local_series.items():
+        if info.get("modality") in ("RTSTRUCT", "REG"):
+            refs = set(info.get("references", []))
+            if refs and not (refs & valid_series):
+                for fpath in info.get("files", []):
+                    try:
+                        os.remove(fpath)
+                    except Exception:
+                        pass
+                to_remove.append(uid)
+
+    for uid in to_remove:
+        local_series.pop(uid, None)
+
+    for ref, (rs_uid, _) in list(placeholder_map.items()):
+        if rs_uid in to_remove:
+            placeholder_map.pop(ref, None)
+
+    registration_uids = [
+        uid
+        for uid, info in local_series.items()
+        if info.get("modality") == "REG"
+    ]
+
+    return RefreshResult(
+        series=local_series,
+        references=references,
+        imaging_uids=imaging_uids,
+        registration_uids=registration_uids,
+        placeholder_map=placeholder_map,
+    )
+
+
 def main():
     """Launch the MRgTB preprocessing GUI and initialise automation state."""
     load_environment(".env")
@@ -280,50 +498,7 @@ def main():
     root = tk.Tk()
     root.title("MRgTB Preprocessing")
 
-    # Queue used to marshal callbacks from worker threads back to Tk safely.
-    tk_call_queue: queue.Queue = queue.Queue()
-
-    def run_on_tk_thread(func, *args, wait: bool = False, **kwargs):
-        """Execute *func* on the Tk thread, optionally waiting for the result."""
-
-        if threading.current_thread() is threading.main_thread():
-            return func(*args, **kwargs)
-
-        payload = {} if wait else None
-        event = threading.Event() if wait else None
-        tk_call_queue.put((func, args, kwargs, event, payload))
-        if wait:
-            event.wait()
-            if payload and "error" in payload:
-                raise payload["error"]
-            return payload.get("result") if payload else None
-        return None
-
-    def process_tk_queue():
-        """Drain any pending cross-thread Tk operations."""
-
-        while True:
-            try:
-                func, args, kwargs, event, payload = tk_call_queue.get_nowait()
-            except queue.Empty:
-                break
-            try:
-                result = func(*args, **kwargs)
-                if payload is not None:
-                    payload["result"] = result
-            except Exception as exc:  # pragma: no cover - surfaces in GUI console
-                if payload is not None:
-                    payload["error"] = exc
-                else:
-                    print(f"{get_datetime()} Error executing Tk callback: {exc}")
-                    traceback.print_exc()
-            finally:
-                if event is not None:
-                    event.set()
-        root.after(20, process_tk_queue)
-
-    # Kick off the polling loop so worker threads can post results immediately.
-    process_tk_queue()
+    tk_executor = TkThreadExecutor(root)
 
     # Configure grid to accommodate console on the right
     root.grid_columnconfigure(2, weight=1)
@@ -595,14 +770,14 @@ def main():
         latest_imaging_uids = set()
         imaging_refresh_in_progress = True
 
-        def handle_success(result):
+        def handle_success(result: RefreshResult):
             nonlocal series_info, series_vars, checkbox_texts, references_map
-            nonlocal latest_imaging_uids, imaging_refresh_in_progress
-            local_series, references, imaging_uids, registration_uids = result
-            series_info = local_series
-            references_map = references
-            latest_imaging_uids = set(imaging_uids)
-            display_uids = imaging_uids + registration_uids
+            nonlocal latest_imaging_uids, imaging_refresh_in_progress, placeholder_rtstructs
+            series_info = result.series
+            references_map = result.references
+            latest_imaging_uids = set(result.imaging_uids)
+            placeholder_rtstructs = result.placeholder_map
+            display_uids = result.imaging_uids + result.registration_uids
 
             for widget in series_frame.winfo_children():
                 widget.destroy()
@@ -648,129 +823,16 @@ def main():
             if completion_callback:
                 completion_callback(False)
 
-        def worker():
-            try:
-                if not input_dir.exists():
-                    raise FileNotFoundError(
-                        f"Input directory '{input_dir}' does not exist"
-                    )
-                wait_for_stable_imaging(str(input_dir))
-                rename_all_dicom_files(str(input_dir))
-                if check_if_ct_present(str(input_dir)) and not ct_already_resampled(str(input_dir)):
-                    print(f"{get_datetime()} Resampling sCT...")
-                    resample_ct(str(input_dir))
+        current_placeholders = dict(placeholder_rtstructs)
 
-                local_series = list_dicom_series(str(input_dir))
-                if not local_series:
-                    raise RuntimeError(
-                        f"No imaging series found in '{input_dir}'."
-                    )
+        def worker() -> RefreshResult:
+            return refresh_imaging_series(input_dir, current_placeholders)
 
-                # Drop stale placeholder bookkeeping when the files vanish.
-                for ref, (_, path) in list(placeholder_rtstructs.items()):
-                    if not os.path.exists(path):
-                        placeholder_rtstructs.pop(ref, None)
-
-                real_rtstruct_refs: dict[str, str] = {}
-                for uid, info in list(local_series.items()):
-                    if info.get("modality") != "RTSTRUCT":
-                        continue
-                    refs = info.get("references", []) or []
-                    files = info.get("files", [])
-                    entry_is_placeholder = True
-                    for fpath in files:
-                        if _is_placeholder_rtstruct(fpath):
-                            for ref in refs:
-                                placeholder_rtstructs[ref] = (uid, fpath)
-                        else:
-                            entry_is_placeholder = False
-                    if not entry_is_placeholder:
-                        for ref in refs:
-                            real_rtstruct_refs[ref] = uid
-
-                for ref, real_uid in list(real_rtstruct_refs.items()):
-                    placeholder_entry = placeholder_rtstructs.pop(ref, None)
-                    if not placeholder_entry:
-                        continue
-                    placeholder_uid, placeholder_path = placeholder_entry
-                    if placeholder_uid != real_uid:
-                        if placeholder_path and os.path.exists(placeholder_path):
-                            real_files = set(
-                                local_series.get(real_uid, {}).get("files", [])
-                            )
-                            if placeholder_path not in real_files:
-                                try:
-                                    os.remove(placeholder_path)
-                                except Exception:
-                                    pass
-                        local_series.pop(placeholder_uid, None)
-
-                imaging_uids = [
-                    uid
-                    for uid, info in local_series.items()
-                    if info.get("modality") not in ("RTSTRUCT", "REG")
-                ]
-
-                references: dict[str, list[str]] = {}
-                for uid, info in local_series.items():
-                    if info.get("modality") == "RTSTRUCT":
-                        for ref in info.get("references", []) or []:
-                            references.setdefault(ref, []).append(uid)
-
-                for uid in imaging_uids:
-                    if uid not in references:
-                        create_empty_rtstruct(str(input_dir), uid, local_series[uid]["files"])
-                        rs_path = os.path.join(str(input_dir), f"RS_{uid}.dcm")
-                        try:
-                            ds = pydicom.dcmread(rs_path, stop_before_pixels=True, force=True)
-                            new_uid = getattr(ds, "SeriesInstanceUID", None)
-                            date = getattr(ds, "SeriesDate", getattr(ds, "StudyDate", ""))
-                            time_str = getattr(ds, "SeriesTime", getattr(ds, "StudyTime", ""))
-                            desc = getattr(ds, "SeriesDescription", "").strip() or "<no description>"
-                            local_series[new_uid] = {
-                                "date": date,
-                                "time": time_str,
-                                "modality": "RTSTRUCT",
-                                "description": desc,
-                                "files": [rs_path],
-                                "references": [uid],
-                            }
-                            references.setdefault(uid, []).append(new_uid)
-                            placeholder_rtstructs[uid] = (new_uid, rs_path)
-                        except Exception:
-                            pass
-
-                valid_series = set(imaging_uids)
-                to_remove = []
-                for uid, info in local_series.items():
-                    if info.get("modality") in ("RTSTRUCT", "REG"):
-                        refs = set(info.get("references", []))
-                        if refs and not (refs & valid_series):
-                            for fpath in info.get("files", []):
-                                try:
-                                    os.remove(fpath)
-                                except Exception:
-                                    pass
-                            to_remove.append(uid)
-
-                for uid in to_remove:
-                    local_series.pop(uid, None)
-                for ref, (rs_uid, _) in list(placeholder_rtstructs.items()):
-                    if rs_uid in to_remove:
-                        placeholder_rtstructs.pop(ref, None)
-
-                registration_uids = [
-                    uid
-                    for uid, info in local_series.items()
-                    if info.get("modality") == "REG"
-                ]
-
-                result = (local_series, references, imaging_uids, registration_uids)
-                run_on_tk_thread(handle_success, result)
-            except Exception as err:
-                run_on_tk_thread(handle_failure, err)
-
-        threading.Thread(target=worker, daemon=True).start()
+        tk_executor.run_in_thread(
+            worker,
+            on_success=handle_success,
+            on_error=handle_failure,
+        )
 
     btn_images = tk.Button(root, text="Get imaging", command=on_get_images)
     btn_images.grid(row=6, column=0, sticky="w", padx=10, pady=(0, 5))
@@ -785,6 +847,7 @@ def main():
     cleanup_status = tk.Label(root, text="", font=("Helvetica", 14))
 
     def on_cleanup():
+        nonlocal placeholder_rtstructs
         cleanup_status.config(text="\u23F3", fg="orange")  # hourglass
         root.update_idletasks()
 
@@ -793,9 +856,10 @@ def main():
             cleanup_status.config(text="", fg="orange")
             return
 
-        def worker():
+        def worker() -> tuple[bool, set[str], Optional[Exception]]:
             success = True
             removed_rtstruct_uids: set[str] = set()
+            error: Optional[Exception] = None
             try:
                 for uid in uids_to_delete:
                     info = series_info.get(uid, {})
@@ -812,24 +876,30 @@ def main():
                             except Exception:
                                 success = False
                         removed_rtstruct_uids.add(rs_uid)
-                for imaging_uid in uids_to_delete:
-                    placeholder_rtstructs.pop(imaging_uid, None)
-                for ref, (rs_uid, _) in list(placeholder_rtstructs.items()):
-                    if rs_uid in removed_rtstruct_uids:
-                        placeholder_rtstructs.pop(ref, None)
-            except Exception:
+            except Exception as exc:
                 success = False
+                error = exc
+            return success, removed_rtstruct_uids, error
 
-            def finalize():
-                cleanup_status.config(
-                    text="\u2705" if success else "\u274C",
-                    fg="green" if success else "red",
-                )
-                on_get_images()
+        def finalize(result: tuple[bool, set[str], Optional[Exception]]) -> None:
+            success, removed_rtstruct_uids, error = result
+            if error is not None:
+                print(f"{get_datetime()} Cleanup encountered an error: {error}")
+            for imaging_uid in uids_to_delete:
+                placeholder_rtstructs.pop(imaging_uid, None)
+            for ref, (rs_uid, _) in list(placeholder_rtstructs.items()):
+                if rs_uid in removed_rtstruct_uids:
+                    placeholder_rtstructs.pop(ref, None)
+            cleanup_status.config(
+                text="\u2705" if success else "\u274C",
+                fg="green" if success else "red",
+            )
+            on_get_images()
 
-            run_on_tk_thread(finalize)
+        def handle_error(exc: Exception) -> None:
+            finalize((False, set(), exc))
 
-        threading.Thread(target=worker, daemon=True).start()
+        tk_executor.run_in_thread(worker, on_success=finalize, on_error=handle_error)
 
     btn_cleanup = tk.Button(
         root,
@@ -926,7 +996,7 @@ def main():
                 msg = "Accept registration result?\n" + "\n".join(details)
                 return messagebox.askyesno("Registration", msg)
 
-            return run_on_tk_thread(ask_user, wait=True)
+            return tk_executor.call(ask_user, wait=True)
 
         def view_registration(*args, **kwargs):
             """Run the matplotlib viewer on the Tk thread and wait for it to close."""
@@ -934,7 +1004,7 @@ def main():
             def launch():
                 return run_viewer(*args, **kwargs)
 
-            return run_on_tk_thread(launch, wait=True)
+            return tk_executor.call(launch, wait=True)
 
         def finalize_failure(err=None, rejected=False):
             """Update UI and automation flags when registration fails."""
@@ -1050,27 +1120,28 @@ def main():
 
             poll_queue()
 
-        def worker():
-            try:
-                result = perform_registration(
-                    str(input_dir),
-                    patient_id,
-                    rtplan_label,
-                    selected_series_uid=selected_uid,
-                    selected_modality=selected_modality,
-                    moving_series_uid=bp_uid,
-                    moving_modality=bp_modality,
-                    confirm_fn=confirm_threadsafe,
-                    manual_fine_tuning=(mode == "semi"),
-                    viewer_fn=view_registration,
-                )
-            except Exception as exc:
-                run_on_tk_thread(finalize_failure, err=exc)
-                return
+        def worker() -> tuple:
+            return perform_registration(
+                str(input_dir),
+                patient_id,
+                rtplan_label,
+                selected_series_uid=selected_uid,
+                selected_modality=selected_modality,
+                moving_series_uid=bp_uid,
+                moving_modality=bp_modality,
+                confirm_fn=confirm_threadsafe,
+                manual_fine_tuning=(mode == "semi"),
+                viewer_fn=view_registration,
+            )
 
-            run_on_tk_thread(handle_registration_result, result)
+        def handle_error(exc: Exception) -> None:
+            finalize_failure(err=exc)
 
-        threading.Thread(target=worker, daemon=True).start()
+        tk_executor.run_in_thread(
+            worker,
+            on_success=handle_registration_result,
+            on_error=handle_error,
+        )
 
 
     btn_register = tk.Button(root, text="Register", command=lambda: on_register())
