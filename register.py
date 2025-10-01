@@ -1231,7 +1231,15 @@ class MultiViewOverlay:
 
     def show(self):
         """Display the viewer window."""
-        plt.show()
+        try:
+            plt.show()
+        finally:
+            # Explicitly close the figure while we're still on the Tk thread so
+            # Tk-owned objects (e.g. PhotoImage instances) are destroyed from
+            # the main loop rather than a background worker collecting them
+            # later, which would otherwise raise "main thread is not in main
+            # loop" RuntimeError warnings during automation.
+            plt.close(self.fig)
 
     def _compute_range(self, array):
         lo = np.percentile(array, 1)
