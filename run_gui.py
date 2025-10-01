@@ -632,9 +632,18 @@ def main():
                 completion_callback(True)
 
         def handle_failure(err):
-            nonlocal imaging_refresh_in_progress
+            nonlocal series_info, series_vars, checkbox_texts
+            nonlocal references_map, latest_imaging_uids, imaging_refresh_in_progress
             images_status.config(text="\u274C", fg="red")
             print(f"{get_datetime()} Failed to get images: {err}")
+            series_info = {}
+            references_map = {}
+            latest_imaging_uids = set()
+            for widget in series_frame.winfo_children():
+                widget.destroy()
+            series_vars.clear()
+            checkbox_texts.clear()
+            update_dropdown()
             imaging_refresh_in_progress = False
             if completion_callback:
                 completion_callback(False)
