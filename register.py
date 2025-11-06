@@ -13,6 +13,7 @@ from matplotlib.widgets import Slider
 from pydicom.dataset import Dataset, FileDataset
 from pydicom.sequence import Sequence
 from pydicom.uid import generate_uid, ExplicitVRLittleEndian
+from pydicom.tag import Tag
 
 from dbconnector import DBHandler
 from utils import (
@@ -169,7 +170,44 @@ def get_base_plan(patient_id, rtplan_label, rtplan_uid):
                          rtplan_uid=rtplan_uid)
 
 
+def _fix_extended_ct(root_dir):
+    """
+    Walk root_dir recursively. If a file is DICOM with Modality=='CT'
+    and it contains tag (default 0018,A001), delete it.
+
+    Returns (num_examined, num_deleted). Set dry_run=True to preview.
+    """
+    root = Path(root_dir)
+    tag = Tag(0x0018, 0xA001)
+    examined = 0
+    deleted = 0
+
+    for p in root.rglob("*"):
+        if not p.is_file():
+            continue
+        # Fast reject common non-DICOMs by extension if you want, else try read.
+        try:
+            ds = pydicom.dcmread(p, stop_before_pixels=True, force=False)
+        except Exception:
+            continue  # not a DICOM or unreadable
+        examined += 1
+
+        try:
+            if getattr(ds, "Modality", None) == "CT" and (tag in ds):
+                p.unlink(missing_ok=True)
+                print(f"Deleted: {p}")
+                deleted += 1
+        except Exception as e:
+            # Skip weird edge cases but keep going
+            print(f"Skip {p}: {e}")
+            continue
+
+    return examined, deleted
+
+
 def read_dicom_series(directory, modality="CT", series_uid=None):
+    _fix_extended_ct(directory)
+
     reader = sitk.ImageSeriesReader()
     series_IDs = reader.GetGDCMSeriesIDs(directory)
     if not series_IDs:
