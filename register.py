@@ -917,24 +917,21 @@ def create_registration_file(output_reg_file, final_transform, fixed_meta, movin
     Create a DICOM Spatial Registration file containing the transform.
     """
     def transformation_matrix():
-        # Extract the rigid transform from the (possibly composite) transform
-        rigid_transform = get_final_rigid_transform(final_transform)
+        rigid = get_final_rigid_transform(final_transform)
 
-        # Invert the rigid transform so that the matrix maps from moving -> fixed
-        rigid_transform = rigid_transform.GetInverse()
+        # DICOM expects moving -> fixed, registration returns fixed -> moving.
+        rigid = rigid.GetInverse()
 
-        # Extract rotation (3x3) and translation (3-element)
-        rot = np.array(rigid_transform.GetMatrix()).reshape(3, 3)
-        trans = np.array(rigid_transform.GetTranslation())
+        R = np.array(rigid.GetMatrix()).reshape(3, 3)
+        t = np.array(rigid.GetTranslation())
+        c = np.array(rigid.GetCenter())  # mm, in patient LPS
 
-        # Build a 4x4 homogeneous transformation matrix in row-major order
         T = np.eye(4, dtype=np.float64)
-        T[:3, :3] = rot
-        T[:3, 3] = trans
+        T[:3, :3] = R
+        # center-correct translation:
+        T[:3, 3] = t + c - R.dot(c)
 
-        # Flatten in row-major (C-order)
-        mat_list = T.flatten(order='C').tolist()
-        return [float_to_ds_string(v) for v in mat_list]
+        return [float_to_ds_string(v) for v in T.flatten(order='C')]
 
     # Helper: create referenced image sequence
     def create_referenced_image_sequence(dicom_files):
