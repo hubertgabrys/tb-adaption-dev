@@ -1,5 +1,6 @@
 import datetime
 import csv
+import math
 import os
 import socket
 import time
@@ -13,7 +14,7 @@ from matplotlib.widgets import Slider
 from pydicom.dataset import Dataset, FileDataset
 from pydicom.sequence import Sequence
 from pydicom.uid import generate_uid, ExplicitVRLittleEndian
-from pydicom.tag import Tag
+from pydicom.errors import InvalidDicomError
 
 from dbconnector import DBHandler
 from utils import (
@@ -170,38 +171,45 @@ def get_base_plan(patient_id, rtplan_label, rtplan_uid):
                          rtplan_uid=rtplan_uid)
 
 
-def _fix_extended_ct(root_dir):
+def _fix_extended_ct(root_dir, tol_mm=0.1):
     """
-    Walk root_dir recursively. If a file is DICOM with Modality=='CT'
-    and it contains tag (default 0018,A001), delete it.
-
-    Returns (num_examined, num_deleted). Set dry_run=True to preview.
+    Delete CT slices where |ImagePositionPatient[2] - SliceLocation| > tol_mm.
+    Returns (num_examined, num_deleted).
     """
     root = Path(root_dir)
-    tag = Tag(0x0018, 0xA001)
     examined = 0
     deleted = 0
 
     for p in root.rglob("*"):
         if not p.is_file():
             continue
-        # Fast reject common non-DICOMs by extension if you want, else try read.
         try:
             ds = pydicom.dcmread(p, stop_before_pixels=True, force=False)
-        except Exception:
-            continue  # not a DICOM or unreadable
-        examined += 1
-
-        try:
-            if getattr(ds, "Modality", None) == "CT" and (tag in ds):
-                p.unlink(missing_ok=True)
-                print(f"Deleted: {p}")
-                deleted += 1
-        except Exception as e:
-            # Skip weird edge cases but keep going
-            print(f"Skip {p}: {e}")
+        except (InvalidDicomError, Exception):
             continue
 
+        examined += 1
+        if getattr(ds, "Modality", None) != "CT":
+            continue
+
+        ipp = getattr(ds, "ImagePositionPatient", None)
+        sl = getattr(ds, "SliceLocation", None)
+        if ipp is None or sl is None or len(ipp) < 3:
+            continue
+
+        try:
+            z_ipp = float(ipp[2])
+            z_sl = float(sl)
+        except Exception:
+            continue
+
+        if math.isfinite(z_ipp) and math.isfinite(z_sl) and abs(z_ipp - z_sl) > tol_mm:
+            try:
+                p.unlink(missing_ok=True)
+                print(f"Deleted: {p}  (IPP z={z_ipp:.6f}, SliceLocation={z_sl:.6f}, diff={abs(z_ipp - z_sl):.6f} mm)")
+                deleted += 1
+            except Exception:
+                pass
     return examined, deleted
 
 
