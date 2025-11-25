@@ -664,8 +664,8 @@ def main():
                 print(
                     f"{get_datetime()} Auto-deleting {len(outdated_uids)} series older than today."
                 )
-                root.after(0, on_cleanup)
-            if completion_callback:
+                on_cleanup(completion_callback=completion_callback)
+            elif completion_callback:
                 completion_callback(True)
 
         def handle_failure(err):
@@ -821,7 +821,7 @@ def main():
     # Delete selected series button
     cleanup_status = tk.Label(root, text="", font=("Helvetica", 14))
 
-    def on_cleanup():
+    def on_cleanup(*, completion_callback=None):
         cleanup_status.config(text="\u23F3", fg="orange")  # hourglass
         root.update_idletasks()
 
@@ -862,7 +862,7 @@ def main():
                     text="\u2705" if success else "\u274C",
                     fg="green" if success else "red",
                 )
-                on_get_images()
+                on_get_images(completion_callback=completion_callback)
 
             run_on_tk_thread(finalize)
 
