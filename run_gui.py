@@ -1,3 +1,4 @@
+import datetime
 import os
 import sys
 import time
@@ -593,7 +594,12 @@ def main():
 
     imaging_refresh_in_progress = False
 
-    def on_get_images(completion_callback=None):
+    def on_get_images(
+        completion_callback=None,
+        *,
+        skip_outdated_cleanup: bool = False,
+        cleanup_success: bool = True,
+    ):
         """Refresh imaging list, creating empty RTSTRUCTs for orphan studies."""
 
         print(f"{get_datetime()} Getting images from {input_dir}...")
@@ -620,6 +626,16 @@ def main():
             latest_imaging_uids = set(imaging_uids)
             display_uids = imaging_uids + registration_uids
 
+            def is_series_older_than_today(uid: str) -> bool:
+                info = series_info.get(uid, {})
+                try:
+                    series_date = datetime.datetime.strptime(
+                        info.get("date", ""), "%Y%m%d"
+                    ).date()
+                except Exception:
+                    return False
+                return series_date < datetime.date.today()
+
             for widget in series_frame.winfo_children():
                 widget.destroy()
             series_vars.clear()
@@ -638,14 +654,24 @@ def main():
                 series_vars[uid] = var
                 checkbox_texts[uid] = text
 
+            outdated_uids = [uid for uid in display_uids if is_series_older_than_today(uid)]
+
+            for uid in outdated_uids:
+                series_vars[uid].set(True)
+
             update_dropdown()
             images_status.config(text="\u2705", fg="green")
             end_time = time.time()
             print(f"{get_datetime()} Getting the images {end_time - start_time:.2f} seconds")
             print(f"{get_datetime()} DONE\n")
             imaging_refresh_in_progress = False
-            if completion_callback:
-                completion_callback(True)
+            if outdated_uids and not skip_outdated_cleanup:
+                print(
+                    f"{get_datetime()} Auto-deleting {len(outdated_uids)} series older than today."
+                )
+                on_cleanup(completion_callback=completion_callback)
+            elif completion_callback:
+                completion_callback(cleanup_success)
 
         def handle_failure(err):
             nonlocal series_info, series_vars, checkbox_texts
@@ -800,7 +826,7 @@ def main():
     # Delete selected series button
     cleanup_status = tk.Label(root, text="", font=("Helvetica", 14))
 
-    def on_cleanup():
+    def on_cleanup(*, completion_callback=None):
         cleanup_status.config(text="\u23F3", fg="orange")  # hourglass
         root.update_idletasks()
 
@@ -841,7 +867,11 @@ def main():
                     text="\u2705" if success else "\u274C",
                     fg="green" if success else "red",
                 )
-                on_get_images()
+                on_get_images(
+                    completion_callback=completion_callback,
+                    skip_outdated_cleanup=not success,
+                    cleanup_success=success,
+                )
 
             run_on_tk_thread(finalize)
 
