@@ -594,7 +594,12 @@ def main():
 
     imaging_refresh_in_progress = False
 
-    def on_get_images(completion_callback=None):
+    def on_get_images(
+        completion_callback=None,
+        *,
+        skip_outdated_cleanup: bool = False,
+        cleanup_success: bool = True,
+    ):
         """Refresh imaging list, creating empty RTSTRUCTs for orphan studies."""
 
         print(f"{get_datetime()} Getting images from {input_dir}...")
@@ -660,13 +665,13 @@ def main():
             print(f"{get_datetime()} Getting the images {end_time - start_time:.2f} seconds")
             print(f"{get_datetime()} DONE\n")
             imaging_refresh_in_progress = False
-            if outdated_uids:
+            if outdated_uids and not skip_outdated_cleanup:
                 print(
                     f"{get_datetime()} Auto-deleting {len(outdated_uids)} series older than today."
                 )
                 on_cleanup(completion_callback=completion_callback)
             elif completion_callback:
-                completion_callback(True)
+                completion_callback(cleanup_success)
 
         def handle_failure(err):
             nonlocal series_info, series_vars, checkbox_texts
@@ -862,7 +867,11 @@ def main():
                     text="\u2705" if success else "\u274C",
                     fg="green" if success else "red",
                 )
-                on_get_images(completion_callback=completion_callback)
+                on_get_images(
+                    completion_callback=completion_callback,
+                    skip_outdated_cleanup=not success,
+                    cleanup_success=success,
+                )
 
             run_on_tk_thread(finalize)
 
