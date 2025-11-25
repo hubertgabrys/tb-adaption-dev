@@ -1,3 +1,4 @@
+import datetime
 import os
 import sys
 import time
@@ -620,6 +621,16 @@ def main():
             latest_imaging_uids = set(imaging_uids)
             display_uids = imaging_uids + registration_uids
 
+            def is_series_older_than_today(uid: str) -> bool:
+                info = series_info.get(uid, {})
+                try:
+                    series_date = datetime.datetime.strptime(
+                        info.get("date", ""), "%Y%m%d"
+                    ).date()
+                except Exception:
+                    return False
+                return series_date < datetime.date.today()
+
             for widget in series_frame.winfo_children():
                 widget.destroy()
             series_vars.clear()
@@ -638,12 +649,22 @@ def main():
                 series_vars[uid] = var
                 checkbox_texts[uid] = text
 
+            outdated_uids = [uid for uid in display_uids if is_series_older_than_today(uid)]
+
+            for uid in outdated_uids:
+                series_vars[uid].set(True)
+
             update_dropdown()
             images_status.config(text="\u2705", fg="green")
             end_time = time.time()
             print(f"{get_datetime()} Getting the images {end_time - start_time:.2f} seconds")
             print(f"{get_datetime()} DONE\n")
             imaging_refresh_in_progress = False
+            if outdated_uids:
+                print(
+                    f"{get_datetime()} Auto-deleting {len(outdated_uids)} series older than today."
+                )
+                root.after(0, on_cleanup)
             if completion_callback:
                 completion_callback(True)
 
