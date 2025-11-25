@@ -588,26 +588,40 @@ def perform_initial_registration(fixed_image, moving_image):
 def tune_initial_registration(
     fixed_image,
     moving_image,
+    fixed_mask,
+    moving_mask,
     transform,
     mode='auto',
     pad_slices=0,
     fixed_modality="MR",
     moving_modality="CT",
 ):
-    if mode == 'auto':
+
+    def _run_exhaustive_search(steps=(4, 4, 4)):
         print(f"{get_datetime()} Translation-only exhaustive start")
+        print(f"{get_datetime()} Running with steps: {steps}")
         translationTx = sitk.TranslationTransform(3)
         translationTx.SetOffset(transform.GetTranslation())
         registration_method = sitk.ImageRegistrationMethod()
         registration_method.SetMetricAsMattesMutualInformation(25)
         registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
         registration_method.SetMetricSamplingPercentage(0.05, seed=42)  # 5% of voxels
-        registration_method.SetOptimizerAsExhaustive(numberOfSteps=[4, 4, 4], stepLength=8)
+        registration_method.SetOptimizerAsExhaustive(numberOfSteps=steps, stepLength=8)
         registration_method.SetInitialTransform(translationTx)
         registration_method.SetInterpolator(sitk.sitkLinear)
         auto_translation = registration_method.Execute(fixed_image, moving_image)
         transform.SetTranslation(auto_translation.GetOffset())
+        normalized_metric_value = _calc_nmi(fixed_image, moving_image, transform, fixed_mask, moving_mask)
+        print(f"{get_datetime()} NMI = {normalized_metric_value}")
         print(f"{get_datetime()} Translation-only exhaustive done")
+        return transform, normalized_metric_value
+    if mode == 'auto':
+        threshold_nmi = 1.04
+        for step in [1, 2, 4]:
+            transform, nmi = _run_exhaustive_search(steps=[step] * 3)
+            if nmi >= threshold_nmi:
+                break
+
         return transform
     elif mode == 'manual':
         print(f"{get_datetime()} Translation-only manual fine-tuning start")
@@ -686,6 +700,46 @@ def perform_rigid_registration(fixed_image, moving_image, initial_transform, fix
 
     return final_transform, metric_value
 
+
+def _calc_nmi(fixed_img, moving_img, transform, fixed_mask=None, moving_mask=None):
+    min_val_moving = -1024
+
+    # Resample for visual check
+    moving_img = sitk.Resample(
+        moving_img,
+        fixed_img,
+        transform,
+        sitk.sitkLinear,
+        min_val_moving,
+        moving_img.GetPixelIDValue()
+    )
+
+    if fixed_mask and moving_mask:
+        # Resample moving mask and compute MI within common body region
+        moving_mask = sitk.Resample(
+            moving_mask,
+            fixed_img,
+            transform,
+            sitk.sitkNearestNeighbor,
+            0,
+            sitk.sitkUInt8
+        )
+
+        common_mask = sitk.And(sitk.Cast(fixed_mask, sitk.sitkUInt8),
+                           sitk.Cast(moving_mask, sitk.sitkUInt8))
+    else:
+        common_mask = None
+
+    mi, h_fixed, h_moving = calc_mutual_information(
+        fixed_img, moving_img,
+        bins=64, sample_fraction=0.1, percentile_clip=(1, 99),
+        mask=common_mask
+    )
+    # Studholme’s NMI = (H(X)+H(Y)) / H(X,Y), and H(X,Y) = H(X)+H(Y) - MI
+    h_joint = (h_fixed + h_moving) - mi
+    eps = 1e-12  # numerical safeguard; joint entropy should not be <= 0, but protect anyway
+    normalized_metric_value = (h_fixed + h_moving) / max(h_joint, eps)
+    return normalized_metric_value
 
 def perform_registration(current_directory, patient_id, rtplan_label,
                          selected_series_uid=None, selected_modality=None,
@@ -779,9 +833,6 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         new_spacing=(1.5, 1.5, 1.5),
     )
 
-    min_val_fixed = -1024 if fixed_modality == "CT" else 0
-    min_val_moving = -1024 if moving_modality == "CT" else 0
-
     # ----- Robust preprocessing: masks, N4 for MR, winsorize+rescale -----
     print(f"{get_datetime()} Generating BODY masks")
     fixed_mask  = make_body_mask(iso_fixed,  fixed_modality)
@@ -799,6 +850,8 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         iso_moving,
     )
     prealign_transform_translation = prealign_transform.GetTranslation()
+    normalized_metric_value = _calc_nmi(iso_fixed, iso_moving, prealign_transform, fixed_mask, moving_mask)
+    print(f"{get_datetime()} Final normalized mutual information (Studholme): {normalized_metric_value:.4f}")
 
     # Fine-tuning
     if manual_fine_tuning:
@@ -816,6 +869,8 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         fine_tuned_transform = tune_initial_registration(
             iso_fixed,
             iso_moving,
+            fixed_mask,
+            moving_mask,
             prealign_transform,
             mode='auto',
             pad_slices=pad_slices,
@@ -824,6 +879,8 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         )
 
     # Fine-tuned prealignment
+    normalized_metric_value = _calc_nmi(iso_fixed, iso_moving, fine_tuned_transform, fixed_mask, moving_mask)
+    print(f"{get_datetime()} Final normalized mutual information (Studholme): {normalized_metric_value:.4f}")
     print(f"{get_datetime()} Fine-tuned transform: {[round(e,2) for e in fine_tuned_transform.GetTranslation()]} mm")
 
     # Rigid registration (masked, multi-resolution)
@@ -835,45 +892,15 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         moving_mask=moving_mask,
     )
 
-    # Resample for visual check
-    moving_resampled = sitk.Resample(
-        iso_moving,
-        iso_fixed,
-        rigid_transform,
-        sitk.sitkLinear,
-        min_val_moving,
-        iso_moving.GetPixelIDValue()
-    )
-
-    # Resample moving mask and compute MI within common body region
-    moving_mask_resampled = sitk.Resample(
-        moving_mask,
-        iso_fixed,
-        rigid_transform,
-        sitk.sitkNearestNeighbor,
-        0,
-        sitk.sitkUInt8
-    )
-    common_mask = sitk.And(sitk.Cast(fixed_mask, sitk.sitkUInt8),
-                           sitk.Cast(moving_mask_resampled, sitk.sitkUInt8))
-
-    mi, h_fixed, h_moving = calc_mutual_information(
-        iso_fixed, moving_resampled,
-        bins=64, sample_fraction=0.1, percentile_clip=(1, 99),
-        mask=common_mask
-    )
-    # Studholme’s NMI = (H(X)+H(Y)) / H(X,Y), and H(X,Y) = H(X)+H(Y) - MI
-    h_joint = (h_fixed + h_moving) - mi
-    eps = 1e-12  # numerical safeguard; joint entropy should not be <= 0, but protect anyway
-    normalized_metric_value = (h_fixed + h_moving) / max(h_joint, eps)
+    normalized_metric_value = _calc_nmi(iso_fixed, iso_moving, rigid_transform, fixed_mask, moving_mask)
+    historical_costs = _load_series_cost_history(fixed_series_description)
+    percentile = _compute_top_percentile(normalized_metric_value, historical_costs)
 
     # Show images after registration
     translation = rigid_transform.GetNthTransform(0).GetTranslation()
     print(f"{get_datetime()} Final transform: {[round(e, 2) for e in translation]} mm")
     print(f"{get_datetime()} Final normalized mutual information (Studholme): {normalized_metric_value:.4f}")
 
-    historical_costs = _load_series_cost_history(fixed_series_description)
-    percentile = _compute_top_percentile(normalized_metric_value, historical_costs)
     if percentile is not None:
         quality_percent = 100.0 - percentile
         stars = star_rating(quality_percent)
