@@ -479,16 +479,52 @@ def make_body_mask(img: sitk.Image, modality: str) -> sitk.Image:
     - MR: light smoothing + Otsu, keep largest component, close small holes.
     """
     modality = modality.upper()
-    if modality == "CT":
-        mask = sitk.BinaryThreshold(img, lowerThreshold=-300, upperThreshold=1e6, insideValue=1, outsideValue=0)
+    dim = img.GetDimension()
+    assert dim in (2, 3)
+
+    # Choose anisotropic shrink (keep z as is)
+    if dim == 3:
+        shrink_factors = [2, 2, 1]
     else:
-        smooth = sitk.CurvatureFlow(image1=img, timeStep=0.125, numberOfIterations=5)
-        mask = sitk.OtsuThreshold(smooth, 0, 1)  # foreground=1
-    mask = sitk.Cast(mask, sitk.sitkUInt8)
-    cc = sitk.ConnectedComponent(mask)
+        shrink_factors = [2, 2]
+
+    shrink = sitk.ShrinkImageFilter()
+    shrink.SetShrinkFactors(shrink_factors)
+    img_small = shrink.Execute(img)
+
+    # --- Threshold / Otsu on low-res ---
+    if modality == "CT":
+        mask_small = sitk.BinaryThreshold(
+            img_small,
+            lowerThreshold=-300,
+            upperThreshold=1e6,
+            insideValue=1,
+            outsideValue=0,
+        )
+    else:
+        # Cheaper smoothing than CurvatureFlow
+        smooth_small = sitk.RecursiveGaussian(img_small, sigma=1.0)
+        mask_small = sitk.OtsuThreshold(smooth_small, 0, 1)
+
+    mask_small = sitk.Cast(mask_small, sitk.sitkUInt8)
+
+    # --- Largest component on low-res ---
+    cc = sitk.ConnectedComponent(mask_small)
     relabeled = sitk.RelabelComponent(cc, sortByObjectSize=True)
-    largest = sitk.BinaryThreshold(relabeled, 1, 1, 1, 0)
-    closed = sitk.BinaryMorphologicalClosing(largest, kernelRadius=(13,) * img.GetDimension())
+    largest_small = sitk.BinaryThreshold(relabeled, 1, 1, 1, 0)
+
+    # --- Morphological closing on low-res, smaller radius ---
+    # radius scaled with shrink_factors, so we can use e.g. 5 instead of 13
+    close_radius = (5,) * dim
+    closed_small = sitk.BinaryMorphologicalClosing(largest_small, kernelRadius=close_radius)
+
+    # --- Resample mask back to original grid (nearest neighbour) ---
+    resampler = sitk.ResampleImageFilter()
+    resampler.SetReferenceImage(img)
+    resampler.SetInterpolator(sitk.sitkNearestNeighbor)
+    resampler.SetTransform(sitk.Transform())  # identity
+    closed = resampler.Execute(closed_small)
+
     return sitk.Cast(closed, sitk.sitkUInt8)
 
 def winsorize_and_rescale(img: sitk.Image, mask: sitk.Image, low_q: float = 1.0, high_q: float = 99.0) -> sitk.Image:
