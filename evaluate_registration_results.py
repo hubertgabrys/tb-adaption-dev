@@ -42,3 +42,5 @@ print("Shifts from initial to final")
 for col in ['x', 'y', 'z']:
     print(f"{col}: {df_s[f'ft-it_{col}'].abs().max()}")
 
+print("Normalized mutual information")
+print(df_s["normalized_mutual_information"].describe())
