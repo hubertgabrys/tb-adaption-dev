@@ -652,7 +652,7 @@ def tune_initial_registration(
         print(f"{get_datetime()} Translation-only exhaustive done")
         return transform, normalized_metric_value
     if mode == 'auto':
-        threshold_nmi = 1.04
+        threshold_nmi = 1.03
         for step in [1, 2, 4]:
             transform, nmi = _run_exhaustive_search(steps=[step] * 3)
             if nmi >= threshold_nmi:
