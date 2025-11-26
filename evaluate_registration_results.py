@@ -1,6 +1,8 @@
 from pathlib import Path
 
 import pandas as pd
+import matplotlib.pyplot as plt
+
 
 LOG_FILE = Path(r"\\raoariaapps\raoariaapps$\Utilities\tb_adaption\registration_log.csv")
 LOG_FILE_ANALYSIS = Path(r"\\raoariaapps\raoariaapps$\Utilities\tb_adaption\registration_log_analysis.csv")
@@ -44,3 +46,5 @@ for col in ['x', 'y', 'z']:
 
 print("Normalized mutual information")
 print(df_s["normalized_mutual_information"].describe())
+plt.hist(df_s["normalized_mutual_information"])
+plt.show()
