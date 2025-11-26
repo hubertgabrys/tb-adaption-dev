@@ -135,8 +135,8 @@ def rename_all_dicom_files(directory_path: str) -> None:
         raise errors[0]
 
 
-def wait_for_stable_imaging(directory: str, interval: float = 1.0,
-                            stable_checks: int = 2) -> dict:
+def wait_for_stable_imaging(directory: str, interval: float = 2.0,
+                            stable_checks: int = 3) -> dict:
     """Wait until file count stabilizes before continuing downstream processing."""
     previous_total: int | None = None
     consecutive = 0
