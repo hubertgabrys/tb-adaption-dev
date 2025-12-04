@@ -1,12 +1,24 @@
 import copy
 import os
 import re
+import time
 from pathlib import Path
 
 import pydicom
 from tqdm import tqdm
 
 from utils import float_to_ds_string
+
+
+LIMBUS_STRUCTURE_MAP = {
+    "Bladder": "Bladder",
+    "Bowel_HDR": "Bowel",
+    "Colon_Sigmoid_HDR": "Sigma",
+    "Rectum": "Rectum",
+    "SeminalVes": "SeminalVesicle",
+    "PubicSymphys": "PubicSymphys",
+    "Prostate": "Prostate",
+}
 
 
 def transform_contour_points(transform, contour_data, precision: int = 8):
@@ -74,6 +86,25 @@ def find_rtstruct(directory, description_prefix=None, series_uid=None):
     return None, None
 
 
+def _find_limbus_rtstruct(directory, series_uid=None):
+    """Return the first RTSTRUCT file whose name starts with "limbus_"."""
+
+    for file_name in os.listdir(directory):
+        if not file_name.lower().startswith("limbus_"):
+            continue
+        rtstruct_path = os.path.join(directory, file_name)
+        try:
+            ds = pydicom.dcmread(rtstruct_path, stop_before_pixels=True)
+        except Exception:
+            continue
+        if getattr(ds, "Modality", None) != "RTSTRUCT":
+            continue
+        if series_uid and not _rtstruct_references_series(ds, series_uid):
+            continue
+        return ds, file_name
+    return None, None
+
+
 def read_base_rtstruct(patient_id, rtplan_label, series_uid=None):
     base_dir = Path(os.environ.get("BASEPLAN_DIR")) / patient_id / rtplan_label
     rtstruct, _ = find_rtstruct(str(base_dir), series_uid=series_uid)
@@ -117,6 +148,14 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
 
     # Get the inverse of the transform
     rigid_transform = rigid_transform.GetInverse()
+
+    target_for_uid = None
+    try:
+        fr_seq = getattr(rtstruct_new, "ReferencedFrameOfReferenceSequence", None)
+        if fr_seq and len(fr_seq):
+            target_for_uid = getattr(fr_seq[0], "FrameOfReferenceUID", None)
+    except Exception:
+        target_for_uid = None
 
     # Reset (or initialize) the new RTSTRUCT sequences.
     # We assume these sequences exist so we replace them with new, filtered sequences.
@@ -184,6 +223,160 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
             return True
         return False
 
+    def _collect_roi_numbers_by_name(rtstruct):
+        lookup = {}
+        if hasattr(rtstruct, "StructureSetROISequence"):
+            for roi in rtstruct.StructureSetROISequence:
+                name = getattr(roi, "ROIName", "")
+                number = getattr(roi, "ROINumber", None)
+                if number is not None:
+                    lookup[name.lower()] = number
+        return lookup
+
+    def _remove_roi_by_number(rtstruct, roi_number):
+        def _filter_sequence(attr, number_field):
+            if hasattr(rtstruct, attr):
+                seq = getattr(rtstruct, attr)
+                filtered = [item for item in seq if getattr(item, number_field, None) != roi_number]
+                setattr(rtstruct, attr, pydicom.sequence.Sequence(filtered))
+
+        _filter_sequence("StructureSetROISequence", "ROINumber")
+        _filter_sequence("ROIContourSequence", "ReferencedROINumber")
+        _filter_sequence("RTROIObservationsSequence", "ReferencedROINumber")
+
+    def _next_roi_number(rtstruct):
+        max_number = 0
+        if hasattr(rtstruct, "StructureSetROISequence"):
+            for roi in rtstruct.StructureSetROISequence:
+                number = getattr(roi, "ROINumber", 0)
+                try:
+                    max_number = max(max_number, int(number))
+                except Exception:
+                    continue
+        return max_number + 1
+
+    def _next_observation_number(rtstruct):
+        """Return the next free ObservationNumber for RTROIObservationsSequence."""
+        max_number = 0
+        if hasattr(rtstruct, "RTROIObservationsSequence"):
+            for obs in rtstruct.RTROIObservationsSequence:
+                num = getattr(obs, "ObservationNumber", None)
+                if num is None:
+                    continue
+                try:
+                    max_number = max(max_number, int(num))
+                except Exception:
+                    continue
+        return max_number + 1
+
+    def _copy_limbus_structures(target_rtstruct, directory, series_uid=None):
+        # Wait up to 120 s, retrying every 3 s for the Limbus RTSTRUCT
+        max_wait_s = 120
+        retry_interval_s = 3
+        deadline = time.time() + max_wait_s
+
+        limbus_rtstruct = None
+        limbus_filename = None
+        attempt = 0
+
+        while time.time() < deadline:
+            limbus_rtstruct, limbus_filename = _find_limbus_rtstruct(
+                directory, series_uid=series_uid
+            )
+            if limbus_rtstruct is not None:
+                break
+            attempt += 1
+            print(
+                f"Limbus RTSTRUCT not found (attempt {attempt}); "
+                f"retrying in {retry_interval_s} s..."
+            )
+            time.sleep(retry_interval_s)
+
+        if limbus_rtstruct is None:
+            print(
+                f"Limbus RTSTRUCT not found after waiting {max_wait_s} s. "
+                "Proceeding without Limbus contours."
+            )
+            return
+        else:
+            print(f"Limbus RTSTRUCT found after waiting {attempt*retry_interval_s} s. ")
+
+        limbus_path = os.path.join(directory, limbus_filename)
+
+        target_lookup = _collect_roi_numbers_by_name(target_rtstruct)
+        next_number = _next_roi_number(target_rtstruct)
+
+        # Ensure ObservationNumber uniqueness across existing and imported observations
+        next_obs_number = _next_observation_number(target_rtstruct)
+
+        source_lookup = _collect_roi_numbers_by_name(limbus_rtstruct)
+        if not source_lookup:
+            return
+
+        copied_any = False  # track whether we actually imported anything
+
+        for source_name, target_name in LIMBUS_STRUCTURE_MAP.items():
+            source_number = source_lookup.get(source_name.lower())
+            if source_number is None:
+                continue
+
+            if target_name.lower() in target_lookup:
+                _remove_roi_by_number(target_rtstruct, target_lookup[target_name.lower()])
+
+            new_number = next_number
+            next_number += 1
+
+            source_roi = next(
+                (roi for roi in limbus_rtstruct.StructureSetROISequence
+                 if getattr(roi, "ROIName", "").lower() == source_name.lower()),
+                None,
+            )
+            if source_roi is None:
+                continue
+
+            new_roi = copy.deepcopy(source_roi)
+            new_roi.ROIName = target_name
+            new_roi.ROINumber = new_number
+
+            if target_for_uid:
+                new_roi.ReferencedFrameOfReferenceUID = target_for_uid
+
+            target_rtstruct.StructureSetROISequence.append(new_roi)
+
+            if hasattr(limbus_rtstruct, "ROIContourSequence"):
+                print(f"Copying ROIContourSequence for {target_name} from Limbus")
+                for contour in limbus_rtstruct.ROIContourSequence:
+                    if getattr(contour, "ReferencedROINumber", None) != source_number:
+                        continue
+                    new_contour = copy.deepcopy(contour)
+                    new_contour.ReferencedROINumber = new_number
+                    target_rtstruct.ROIContourSequence.append(new_contour)
+
+            if hasattr(limbus_rtstruct, "RTROIObservationsSequence"):
+                print(f"Copying RTROIObservationsSequence for {target_name} from Limbus")
+                for obs in limbus_rtstruct.RTROIObservationsSequence:
+                    if getattr(obs, "ReferencedROINumber", None) != source_number:
+                        continue
+                    new_obs = copy.deepcopy(obs)
+                    new_obs.ReferencedROINumber = new_number
+
+                    # Assign a new, unique ObservationNumber to avoid collisions
+                    try:
+                        new_obs.ObservationNumber = int(next_obs_number)
+                    except Exception:
+                        new_obs.ObservationNumber = next_obs_number
+                    next_obs_number += 1
+
+                    target_rtstruct.RTROIObservationsSequence.append(new_obs)
+
+        # Remove the Limbus RTSTRUCT file.
+        if os.path.exists(limbus_path):
+            try:
+                os.remove(limbus_path)
+                print(f"Deleted Limbus RTSTRUCT: {limbus_path}")
+            except Exception as exc:
+                print(f"Warning: failed to delete Limbus RTSTRUCT {limbus_path}: {exc}")
+
     # --- Step 1: Filter Structure Set ROI Sequence ---
     # Process each ROI item based on its ROI Name (tag 3006,0026).
     # Record its associated ROI Number (tag 3006,0022) and copy the ROI item into the new StructureSetROISequence.
@@ -199,6 +392,10 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
             approved_roi_numbers.add(roi_number)
             roi_lookup[roi_number] = roi_name  # store the name
             new_roi = copy.deepcopy(roi)
+
+            if target_for_uid:
+                new_roi.ReferencedFrameOfReferenceUID = target_for_uid
+
             rtstruct_new.StructureSetROISequence.append(new_roi)
 
     # --- Step 2: Copy and Transform ROI Contour Sequence ---
@@ -239,12 +436,16 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
     # --- Step 3: Copy RT ROI Observations Sequence ---
     # Each observation item is included only if its Referenced ROI Number (tag 3006,0084)
     # matches one of the approved ROI numbers.
-    for obs in rtstruct_base.RTROIObservationsSequence:
-        ref_roi_num = getattr(obs, "ReferencedROINumber", None)
-        if ref_roi_num not in approved_roi_numbers:
-            continue
-        new_obs = copy.deepcopy(obs)
-        rtstruct_new.RTROIObservationsSequence.append(new_obs)
+    if hasattr(rtstruct_base, "RTROIObservationsSequence"):
+        for obs in rtstruct_base.RTROIObservationsSequence:
+            ref_roi_num = getattr(obs, "ReferencedROINumber", None)
+            if ref_roi_num not in approved_roi_numbers:
+                continue
+            new_obs = copy.deepcopy(obs)
+            rtstruct_new.RTROIObservationsSequence.append(new_obs)
+
+    # --- Step 4: Copy supplemental limbus structures when available ---
+    _copy_limbus_structures(rtstruct_new, current_directory, series_uid=series_uid)
 
     # --- Save the Updated RTSTRUCT ---
     output_filename = os.path.join(current_directory, rtstruct_new_filename)
