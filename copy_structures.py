@@ -1,6 +1,7 @@
 import copy
 import os
 import re
+import time
 from pathlib import Path
 
 import pydicom
@@ -269,12 +270,36 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
         return max_number + 1
 
     def _copy_limbus_structures(target_rtstruct, directory, series_uid=None):
-        limbus_rtstruct, limbus_filename = _find_limbus_rtstruct(directory, series_uid=series_uid)
+        # Wait up to 120 s, retrying every 3 s for the Limbus RTSTRUCT
+        max_wait_s = 120
+        retry_interval_s = 3
+        deadline = time.time() + max_wait_s
+
+        limbus_rtstruct = None
+        limbus_filename = None
+        attempt = 0
+
+        while time.time() < deadline:
+            limbus_rtstruct, limbus_filename = _find_limbus_rtstruct(
+                directory, series_uid=series_uid
+            )
+            if limbus_rtstruct is not None:
+                break
+            attempt += 1
+            print(
+                f"Limbus RTSTRUCT not found (attempt {attempt}); "
+                f"retrying in {retry_interval_s} s..."
+            )
+            time.sleep(retry_interval_s)
+
         if limbus_rtstruct is None:
-            print("Limbus RTSTRUCT not found")
+            print(
+                f"Limbus RTSTRUCT not found after waiting {max_wait_s} s. "
+                "Proceeding without Limbus contours."
+            )
             return
         else:
-            print("Limbus RTSTRUCT found")
+            print(f"Limbus RTSTRUCT found after waiting {attempt*retry_interval_s} s. ")
 
         limbus_path = os.path.join(directory, limbus_filename)
 
