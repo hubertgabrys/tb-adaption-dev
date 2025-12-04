@@ -15,7 +15,7 @@ LIMBUS_STRUCTURE_MAP = {
     "Colon_Sigmoid_HDR": "Sigma",
     "Rectum": "Rectum",
     "SeminalVes": "SeminalVesicle",
-    "PubicSymphs": "PubicSymphs",
+    "PubicSymphys": "PubicSymphys",
     "Prostate": "Prostate",
 }
 
@@ -147,6 +147,14 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
 
     # Get the inverse of the transform
     rigid_transform = rigid_transform.GetInverse()
+
+    target_for_uid = None
+    try:
+        fr_seq = getattr(rtstruct_new, "ReferencedFrameOfReferenceSequence", None)
+        if fr_seq and len(fr_seq):
+            target_for_uid = getattr(fr_seq[0], "FrameOfReferenceUID", None)
+    except Exception:
+        target_for_uid = None
 
     # Reset (or initialize) the new RTSTRUCT sequences.
     # We assume these sequences exist so we replace them with new, filtered sequences.
@@ -301,11 +309,13 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
             if source_roi is None:
                 continue
 
-            copied_any = True
-
             new_roi = copy.deepcopy(source_roi)
             new_roi.ROIName = target_name
             new_roi.ROINumber = new_number
+
+            if target_for_uid:
+                new_roi.ReferencedFrameOfReferenceUID = target_for_uid
+
             target_rtstruct.StructureSetROISequence.append(new_roi)
 
             if hasattr(limbus_rtstruct, "ROIContourSequence"):
@@ -357,6 +367,10 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
             approved_roi_numbers.add(roi_number)
             roi_lookup[roi_number] = roi_name  # store the name
             new_roi = copy.deepcopy(roi)
+
+            if target_for_uid:
+                new_roi.ReferencedFrameOfReferenceUID = target_for_uid
+
             rtstruct_new.StructureSetROISequence.append(new_roi)
 
     # --- Step 2: Copy and Transform ROI Contour Sequence ---
