@@ -12,10 +12,10 @@ from utils import float_to_ds_string
 
 LIMBUS_STRUCTURE_MAP = {
     "Bladder": "Bladder",
-    "Bowel_HDR": "Bowel",
-    "Colon_Sigmoid_HDR": "Sigma",
+    "Bowel": "Bowel",
+    "Sigma": "Sigma",
     "Rectum": "Rectum",
-    "SeminalVes": "SeminalVesicle",
+    "SeminalVesicle": "SeminalVesicle",
     "PubicSymphys": "PubicSymphys",
     "Prostate": "Prostate",
 }
@@ -87,21 +87,28 @@ def find_rtstruct(directory, description_prefix=None, series_uid=None):
 
 
 def _find_limbus_rtstruct(directory, series_uid=None):
-    """Return the first RTSTRUCT file whose name starts with "limbus_"."""
+    """Return the first RTSTRUCT whose Structure Set Label is 'Limbus RTStruct'."""
 
     for file_name in os.listdir(directory):
-        if not file_name.lower().startswith("limbus_"):
-            continue
         rtstruct_path = os.path.join(directory, file_name)
         try:
             ds = pydicom.dcmread(rtstruct_path, stop_before_pixels=True)
         except Exception:
             continue
+
         if getattr(ds, "Modality", None) != "RTSTRUCT":
             continue
+
+        # Check Structure Set Label (3006,0002)
+        label = getattr(ds, "StructureSetLabel", "") or ""
+        if label.strip() != "Limbus RTStruct":
+            continue
+
         if series_uid and not _rtstruct_references_series(ds, series_uid):
             continue
+
         return ds, file_name
+
     return None, None
 
 
