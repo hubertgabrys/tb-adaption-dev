@@ -246,17 +246,41 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
                     continue
         return max_number + 1
 
+    def _next_observation_number(rtstruct):
+        """Return the next free ObservationNumber for RTROIObservationsSequence."""
+        max_number = 0
+        if hasattr(rtstruct, "RTROIObservationsSequence"):
+            for obs in rtstruct.RTROIObservationsSequence:
+                num = getattr(obs, "ObservationNumber", None)
+                if num is None:
+                    continue
+                try:
+                    max_number = max(max_number, int(num))
+                except Exception:
+                    continue
+        return max_number + 1
+
     def _copy_limbus_structures(target_rtstruct, directory, series_uid=None):
-        limbus_rtstruct, _ = _find_limbus_rtstruct(directory, series_uid=series_uid)
+        limbus_rtstruct, limbus_filename = _find_limbus_rtstruct(directory, series_uid=series_uid)
         if limbus_rtstruct is None:
+            print("Limbus RTSTRUCT not found")
             return
+        else:
+            print("Limbus RTSTRUCT found")
+
+        limbus_path = os.path.join(directory, limbus_filename)
 
         target_lookup = _collect_roi_numbers_by_name(target_rtstruct)
         next_number = _next_roi_number(target_rtstruct)
 
+        # Ensure ObservationNumber uniqueness across existing and imported observations
+        next_obs_number = _next_observation_number(target_rtstruct)
+
         source_lookup = _collect_roi_numbers_by_name(limbus_rtstruct)
         if not source_lookup:
             return
+
+        copied_any = False  # track whether we actually imported anything
 
         for source_name, target_name in LIMBUS_STRUCTURE_MAP.items():
             source_number = source_lookup.get(source_name.lower())
@@ -277,12 +301,15 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
             if source_roi is None:
                 continue
 
+            copied_any = True
+
             new_roi = copy.deepcopy(source_roi)
             new_roi.ROIName = target_name
             new_roi.ROINumber = new_number
             target_rtstruct.StructureSetROISequence.append(new_roi)
 
             if hasattr(limbus_rtstruct, "ROIContourSequence"):
+                print(f"Copying ROIContourSequence for {target_name} from Limbus")
                 for contour in limbus_rtstruct.ROIContourSequence:
                     if getattr(contour, "ReferencedROINumber", None) != source_number:
                         continue
@@ -291,12 +318,29 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
                     target_rtstruct.ROIContourSequence.append(new_contour)
 
             if hasattr(limbus_rtstruct, "RTROIObservationsSequence"):
+                print(f"Copying RTROIObservationsSequence for {target_name} from Limbus")
                 for obs in limbus_rtstruct.RTROIObservationsSequence:
                     if getattr(obs, "ReferencedROINumber", None) != source_number:
                         continue
                     new_obs = copy.deepcopy(obs)
                     new_obs.ReferencedROINumber = new_number
+
+                    # Assign a new, unique ObservationNumber to avoid collisions
+                    try:
+                        new_obs.ObservationNumber = int(next_obs_number)
+                    except Exception:
+                        new_obs.ObservationNumber = next_obs_number
+                    next_obs_number += 1
+
                     target_rtstruct.RTROIObservationsSequence.append(new_obs)
+
+        # Remove the Limbus RTSTRUCT file.
+        if os.path.exists(limbus_path):
+            try:
+                os.remove(limbus_path)
+                print(f"Deleted Limbus RTSTRUCT: {limbus_path}")
+            except Exception as exc:
+                print(f"Warning: failed to delete Limbus RTSTRUCT {limbus_path}: {exc}")
 
     # --- Step 1: Filter Structure Set ROI Sequence ---
     # Process each ROI item based on its ROI Name (tag 3006,0026).
@@ -353,12 +397,13 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
     # --- Step 3: Copy RT ROI Observations Sequence ---
     # Each observation item is included only if its Referenced ROI Number (tag 3006,0084)
     # matches one of the approved ROI numbers.
-    for obs in rtstruct_base.RTROIObservationsSequence:
-        ref_roi_num = getattr(obs, "ReferencedROINumber", None)
-        if ref_roi_num not in approved_roi_numbers:
-            continue
-        new_obs = copy.deepcopy(obs)
-        rtstruct_new.RTROIObservationsSequence.append(new_obs)
+    if hasattr(rtstruct_base, "RTROIObservationsSequence"):
+        for obs in rtstruct_base.RTROIObservationsSequence:
+            ref_roi_num = getattr(obs, "ReferencedROINumber", None)
+            if ref_roi_num not in approved_roi_numbers:
+                continue
+            new_obs = copy.deepcopy(obs)
+            rtstruct_new.RTROIObservationsSequence.append(new_obs)
 
     # --- Step 4: Copy supplemental limbus structures when available ---
     _copy_limbus_structures(rtstruct_new, current_directory, series_uid=series_uid)
