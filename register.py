@@ -349,8 +349,8 @@ def _get_isocenter_from_rtplan(rtplan):
     return None
 
 
-def crop_image_to_isocenter(image, patient_id, rtplan_label, padding=72):
-    """Crop *image* to 50 slices above and below the RTPLAN isocenter."""
+def crop_image_to_isocenter(image, patient_id, rtplan_label, padding=80):
+    """Crop *image* to 80 slices above and below the RTPLAN isocenter."""
     rtplan = _read_base_rtplan(patient_id, rtplan_label)
     if rtplan is None:
         print(f"{get_datetime()} No RTPLAN found for cropping")
