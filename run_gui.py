@@ -31,6 +31,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import queue
 import gc
+import shutil
+from typing import List
 
 
 class ConsoleRedirector:
@@ -134,24 +136,57 @@ def rename_all_dicom_files(directory_path: str) -> None:
         raise errors[0]
 
 
-def wait_for_stable_imaging(directory: str, interval: float = 2.0,
-                            stable_checks: int = 3) -> dict:
-    """Wait until file count stabilizes before continuing downstream processing."""
-    previous_total: int | None = None
+def wait_for_stable_imaging(
+    directory: str,
+    interval: float = 2.0,
+    stable_checks: int = 3,
+) -> List[str]:
+    """
+    Wait until the DICOM file list in `directory` is stable for `stable_checks`
+    consecutive checks, then return that list (full paths).
+    """
+    previous_files: set[str] | None = None
     consecutive = 0
-    result = {}
+    current_files: List[str] = []
+
     while consecutive < stable_checks:
-        # result = list_dicom_series(directory, imaging_only=True)
-        # total = sum(len(info["files"]) for info in result.values())
-        total = count_files(directory)
-        if total == previous_total:
+        # Collect DICOM files; adjust filter if needed.
+        current_files = [
+            os.path.join(directory, f)
+            for f in os.listdir(directory)
+            if f.lower().endswith(".dcm")
+        ]
+        current_set = set(current_files)
+
+        if previous_files is not None and current_set == previous_files:
             consecutive += 1
         else:
             consecutive = 0
-            previous_total = total
+            previous_files = current_set
+
         if consecutive < stable_checks:
             time.sleep(interval)
-    return result
+
+    return current_files
+
+
+def move_stable_imaging_to_temp(filelist: List[str], temp_dir: str) -> List[str]:
+    """
+    1. Create `temp_dir` if it does not exist.
+    2. Move all files from `filelist` into `temp_dir`.
+    Returns a list of destination paths.
+    """
+    os.makedirs(temp_dir, exist_ok=True)
+
+    moved_files: List[str] = []
+    for src in filelist:
+        # assume filelist contains full paths
+        filename = os.path.basename(src)
+        dst = os.path.join(temp_dir, filename)
+        shutil.move(src, dst)
+        moved_files.append(dst)
+
+    return moved_files
 
 
 def ct_already_resampled(directory: str) -> bool:
@@ -275,6 +310,7 @@ def main():
         sys.exit(1)
 
     input_dir = input_root / patient_id
+    temp_dir = input_dir.with_name(input_dir.name + "_temp")
     patient_name = get_patient_name(str(input_dir))
 
     root = tk.Tk()
@@ -670,16 +706,17 @@ def main():
                     raise FileNotFoundError(
                         f"Input directory '{input_dir}' does not exist"
                     )
-                wait_for_stable_imaging(str(input_dir))
-                rename_all_dicom_files(str(input_dir))
-                if check_if_ct_present(str(input_dir)) and not ct_already_resampled(str(input_dir)):
+                snapshot_files = wait_for_stable_imaging(str(input_dir))
+                move_stable_imaging_to_temp(snapshot_files, str(temp_dir))
+                rename_all_dicom_files(str(temp_dir))
+                if check_if_ct_present(str(temp_dir)) and not ct_already_resampled(str(temp_dir)):
                     print(f"{get_datetime()} Resampling sCT...")
-                    resample_ct(str(input_dir))
+                    resample_ct(str(temp_dir))
 
-                local_series = list_dicom_series(str(input_dir))
+                local_series = list_dicom_series(str(temp_dir))
                 if not local_series:
                     raise RuntimeError(
-                        f"No imaging series found in '{input_dir}'."
+                        f"No imaging series found in '{temp_dir}'."
                     )
 
                 # Drop stale placeholder bookkeeping when the files vanish.
@@ -735,8 +772,8 @@ def main():
 
                 for uid in imaging_uids:
                     if uid not in references:
-                        create_empty_rtstruct(str(input_dir), uid, local_series[uid]["files"])
-                        rs_path = os.path.join(str(input_dir), f"RS_{uid}.dcm")
+                        create_empty_rtstruct(str(temp_dir), uid, local_series[uid]["files"])
+                        rs_path = os.path.join(str(temp_dir), f"RS_{uid}.dcm")
                         try:
                             ds = pydicom.dcmread(rs_path, stop_before_pixels=True, force=True)
                             new_uid = getattr(ds, "SeriesInstanceUID", None)
@@ -1003,7 +1040,7 @@ def main():
                 try:
                     print(f"{get_datetime()} Copying the structures...")
                     copy_structures(
-                        str(input_dir),
+                        str(temp_dir),
                         patient_id,
                         rtplan_label,
                         rigid_transform,
@@ -1070,7 +1107,7 @@ def main():
         def worker():
             try:
                 result = perform_registration(
-                    str(input_dir),
+                    str(temp_dir),
                     patient_id,
                     rtplan_label,
                     selected_series_uid=selected_uid,

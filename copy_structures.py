@@ -89,6 +89,7 @@ def find_rtstruct(directory, description_prefix=None, series_uid=None):
 def _find_limbus_rtstruct(directory, series_uid=None):
     """Return the first RTSTRUCT whose Structure Set Label is 'Limbus RTStruct'."""
 
+    directory = directory.with_name(directory.name.removesuffix("_temp"))
     for file_name in os.listdir(directory):
         rtstruct_path = os.path.join(directory, file_name)
         try:
