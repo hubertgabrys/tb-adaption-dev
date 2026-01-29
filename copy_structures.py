@@ -277,8 +277,8 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
         return max_number + 1
 
     def _copy_limbus_structures(target_rtstruct, directory, series_uid=None):
-        # Wait up to 60 s, retrying every 3 s for the Limbus RTSTRUCT
-        max_wait_s = 60
+        # Wait up to 3 s, retrying every 3 s for the Limbus RTSTRUCT
+        max_wait_s = 3
         retry_interval_s = 3
         deadline = time.time() + max_wait_s
 
