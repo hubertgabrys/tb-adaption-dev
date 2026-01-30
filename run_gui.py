@@ -278,7 +278,7 @@ def main():
     patient_name = get_patient_name(str(input_dir))
 
     root = tk.Tk()
-    root.title("MRgTB Preprocessing")
+    root.title("ARTEMIS Preprocessing")
 
     # Queue used to marshal callbacks from worker threads back to Tk safely.
     tk_call_queue: queue.Queue = queue.Queue()
@@ -325,12 +325,20 @@ def main():
     # Kick off the polling loop so worker threads can post results immediately.
     process_tk_queue()
 
-    # Configure grid to accommodate console on the right
-    root.grid_columnconfigure(2, weight=1)
+    # Configure grid to accommodate sent panel and console on the right
+    root.grid_columnconfigure(2, weight=0)
+    root.grid_columnconfigure(3, weight=1)
+
+    right_panel = tk.Frame(root)
+    right_panel.grid(row=0, column=3, rowspan=25, sticky="nsew", padx=(10, 10), pady=(0, 10))
+    right_panel.grid_columnconfigure(0, weight=1)
+    right_panel.grid_rowconfigure(2, weight=1)
 
     # Console output widget
-    console = ScrolledText(root, state="disabled", width=140)
-    console.grid(row=0, column=2, rowspan=19, sticky="nsew", padx=(10, 10), pady=10)
+    console_label = tk.Label(right_panel, text="Console:")
+    console_label.grid(row=1, column=0, sticky="w", pady=(10, 0))
+    console = ScrolledText(right_panel, state="disabled", width=140)
+    console.grid(row=2, column=0, sticky="nsew")
 
     # Redirect stdout and stderr to the console widget
     sys.stdout = ConsoleRedirector(console)
@@ -589,6 +597,7 @@ def main():
     series_vars = {}
     checkbox_texts = {}
     references_map = {}
+    sent_info = {}
     latest_imaging_uids: set[str] = set()
 
     imaging_refresh_in_progress = False
@@ -854,8 +863,8 @@ def main():
         bg="#ffbbbb",
         activebackground="#ff9999",
     )
-    btn_cleanup.grid(row=18, column=0, sticky="w", padx=10, pady=(50, 10))
-    cleanup_status.grid(row=18, column=1, sticky="w", pady=(50, 10))
+    btn_cleanup.grid(row=20, column=0, sticky="w", padx=10, pady=(50, 10))
+    cleanup_status.grid(row=20, column=1, sticky="w", pady=(50, 10))
 
     # Dropdown menu for registration series
     selected_label_var = tk.StringVar()
@@ -1102,6 +1111,54 @@ def main():
 
     send_status = tk.Label(root, text="", font=("Helvetica", 14))
     send_progress = ttk.Progressbar(root, length=200, mode="determinate")
+    sent_panel = tk.Frame(right_panel)
+    sent_label = tk.Label(sent_panel, text="Sent to Aria:")
+    sent_tree = ttk.Treeview(
+        sent_panel,
+        columns=("series", "modality", "files", "sent_at"),
+        show="headings",
+        height=6,
+    )
+    sent_tree.heading("series", text="Series")
+    sent_tree.heading("modality", text="Modality")
+    sent_tree.heading("files", text="Files")
+    sent_tree.heading("sent_at", text="Sent At")
+    sent_tree.column("series", width=260, anchor="w")
+    sent_tree.column("modality", width=80, anchor="w")
+    sent_tree.column("files", width=80, anchor="e")
+    sent_tree.column("sent_at", width=140, anchor="w")
+
+    def _sent_file_count(uid: str) -> int:
+        info = series_info.get(uid, {})
+        count = len(info.get("files", []))
+        if info.get("modality") in ("RTSTRUCT", "REG"):
+            return count
+        for ref_uid in references_map.get(uid, []):
+            ref_info = series_info.get(ref_uid, {})
+            count += len(ref_info.get("files", []))
+        return count
+
+    def _update_sent_list(uids: set[str]) -> None:
+        sent_time = get_datetime()
+        expanded_uids = set(uids)
+        for uid in list(uids):
+            expanded_uids.update(references_map.get(uid, []))
+        for uid in sorted(expanded_uids):
+            info = series_info.get(uid, {})
+            series_label = checkbox_texts.get(uid, info.get("description", uid))
+            modality = info.get("modality", "")
+            file_count = _sent_file_count(uid)
+            sent_info[uid] = {
+                "label": series_label,
+                "modality": modality,
+                "files": file_count,
+                "sent_at": sent_time,
+            }
+            values = (series_label, modality, file_count, sent_time)
+            if sent_tree.exists(uid):
+                sent_tree.item(uid, values=values)
+            else:
+                sent_tree.insert("", "end", iid=uid, values=values)
 
     def on_send_to_aria(selected_uids=None, triggered_by_automation: bool = False):
         """Send selected series to Aria and track automation-related selections."""
@@ -1194,6 +1251,7 @@ def main():
             end_time = time.time()
             if result.get("success"):
                 send_status.config(text="\u2705", fg="green")
+                _update_sent_list(target_set)
                 if triggered_by_automation:
                     automation_log("Files sent to Aria successfully.")
                 else:
@@ -1233,6 +1291,9 @@ def main():
     send_status.grid(row=16, column=1, sticky="w")
     send_progress.grid(row=17, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
     send_progress.grid_remove()
+    sent_panel.grid(row=0, column=0, sticky="nsew")
+    sent_label.pack(anchor="w")
+    sent_tree.pack(fill="both", expand=True)
 
     def set_selected_series(uid, label):
         """Update the dropdown selection variables with *uid* and *label*."""
