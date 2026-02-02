@@ -332,12 +332,13 @@ def main():
     right_panel = tk.Frame(root)
     right_panel.grid(row=0, column=3, rowspan=25, sticky="nsew", padx=(10, 10), pady=(0, 10))
     right_panel.grid_columnconfigure(0, weight=1)
+    right_panel.grid_rowconfigure(0, weight=2)
     right_panel.grid_rowconfigure(2, weight=1)
 
     # Console output widget
     console_label = tk.Label(right_panel, text="Console:")
     console_label.grid(row=1, column=0, sticky="w", pady=(10, 0))
-    console = ScrolledText(right_panel, state="disabled", width=140)
+    console = ScrolledText(right_panel, state="disabled", width=140, height=14)
     console.grid(row=2, column=0, sticky="nsew")
 
     # Redirect stdout and stderr to the console widget
@@ -345,7 +346,7 @@ def main():
     sys.stderr = ConsoleRedirector(console)
 
     # Title label
-    lbl_title = tk.Label(root, text="MRgTB Preprocessing", font=("Helvetica", 16))
+    lbl_title = tk.Label(root, text="ARTEMIS Preprocessing", font=("Helvetica", 16))
     lbl_title.grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=10)
 
     # Patient information displayed under the title
@@ -1117,7 +1118,7 @@ def main():
         sent_panel,
         columns=("series", "modality", "files", "sent_at"),
         show="headings",
-        height=6,
+        height=10,
     )
     sent_tree.heading("series", text="Series")
     sent_tree.heading("modality", text="Modality")
