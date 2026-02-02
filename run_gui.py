@@ -445,7 +445,6 @@ def main():
 
                 return run_on_tk_thread(ask_user, wait=True)
             on_register(
-                mode_override="auto",
                 confirm_override=automation_confirm,
                 triggered_by_automation=True,
             )
@@ -878,40 +877,11 @@ def main():
     register_status = tk.Label(root, text="", font=("Helvetica", 14))
     register_progress = ttk.Progressbar(root, length=200, mode="determinate")
 
-    def ask_registration_mode():
-        result = {"mode": None}
-
-        dialog = tk.Toplevel(root)
-        dialog.title("Registration mode")
-        tk.Label(dialog, text="Choose registration mode:").pack(padx=20, pady=(10, 5))
-
-        def choose(mode):
-            result["mode"] = mode
-            dialog.destroy()
-
-        btn_auto = tk.Button(dialog, text="Automatic", width=15,
-                             command=lambda: choose("auto"))
-        btn_semi = tk.Button(dialog, text="Semi-automatic", width=15,
-                             command=lambda: choose("semi"))
-        btn_auto.pack(padx=10, pady=5)
-        btn_semi.pack(padx=10, pady=(0, 10))
-
-        dialog.transient(root)
-        # Center the dialog on the screen
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
-        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
-        dialog.geometry(f"+{x}+{y}")
-        dialog.grab_set()
-        root.wait_window(dialog)
-        return result["mode"]
-
     last_rigid_transform = None
     last_fixed_uid = None
     last_moving_uid = None
 
-    def on_register(mode_override=None, confirm_override=None,
-                    triggered_by_automation: bool = False):
+    def on_register(confirm_override=None, triggered_by_automation: bool = False):
         """Execute the registration workflow and copy structures if successful."""
 
         nonlocal last_rigid_transform, last_fixed_uid, last_moving_uid
@@ -929,15 +899,6 @@ def main():
 
         bp_uid = bp_default_uid
         bp_modality = bp_default_modality
-
-        mode = mode_override or ask_registration_mode()
-        if not mode:
-            register_status.config(text="", fg="orange")
-            if automation_triggered:
-                automation_state["registration_in_progress"] = False
-                automation_state["registration_completed"] = True
-                automation_state["registration_successful"] = False
-            return
 
         def confirm_threadsafe(cost_value, quality_line):
             """Invoke the confirmation dialog on the Tk thread."""
@@ -1088,7 +1049,6 @@ def main():
                     moving_series_uid=bp_uid,
                     moving_modality=bp_modality,
                     confirm_fn=confirm_threadsafe,
-                    manual_fine_tuning=(mode == "semi"),
                     viewer_fn=view_registration,
                 )
             except Exception as exc:

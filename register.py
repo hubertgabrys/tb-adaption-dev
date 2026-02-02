@@ -8,9 +8,9 @@ from pathlib import Path
 
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
+from matplotlib.widgets import Slider
 import numpy as np
 import pydicom
-from matplotlib.widgets import Slider
 from pydicom.dataset import Dataset, FileDataset
 from pydicom.sequence import Sequence
 from pydicom.uid import generate_uid, ExplicitVRLittleEndian
@@ -627,10 +627,6 @@ def tune_initial_registration(
     fixed_mask,
     moving_mask,
     transform,
-    mode='auto',
-    pad_slices=0,
-    fixed_modality="MR",
-    moving_modality="CT",
 ):
 
     def _run_exhaustive_search(steps=(4, 4, 4)):
@@ -651,47 +647,14 @@ def tune_initial_registration(
         print(f"{get_datetime()} NMI = {normalized_metric_value}")
         print(f"{get_datetime()} Translation-only exhaustive done")
         return transform, normalized_metric_value
-    if mode == 'auto':
-        threshold_nmi = 1.03
-        for step in [1, 2, 4]:
-            transform, nmi = _run_exhaustive_search(steps=[step] * 3)
-            if nmi >= threshold_nmi:
-                break
 
-        return transform
-    elif mode == 'manual':
-        print(f"{get_datetime()} Translation-only manual fine-tuning start")
-        shift_z_slices, shift_y_slices, shift_x_slices = run_viewer(
-            fixed_image,
-            moving_image,
-            transform,
-            fixed_modality=fixed_modality,
-            moving_modality=moving_modality,
-            pad_slices=pad_slices,
-        )
+    threshold_nmi = 1.03
+    for step in [1, 2, 4]:
+        transform, nmi = _run_exhaustive_search(steps=[step] * 3)
+        if nmi >= threshold_nmi:
+            break
 
-        # Convert slice shift → mm
-        spacing = fixed_image.GetSpacing()
-        shift_z_mm = shift_z_slices * spacing[2] * (-1)
-        shift_y_mm = shift_y_slices * spacing[1] * (-1)
-        shift_x_mm = shift_x_slices * spacing[0] * (-1)
-        print(
-            f"{get_datetime()} User‐defined Z-shift: {shift_z_slices} slices = {shift_z_mm:.2f} mm"
-        )
-        print(
-            f"{get_datetime()} User‐defined Y-shift: {shift_y_slices} slices = {shift_y_mm:.2f} mm"
-        )
-        print(
-            f"{get_datetime()} User‐defined X-shift: {shift_x_slices} slices = {shift_x_mm:.2f} mm"
-        )
-        new_translation = np.array(transform.GetTranslation()) + np.array((shift_x_mm, shift_y_mm, shift_z_mm))
-        transform.SetTranslation(new_translation)
-        print(f"{get_datetime()} Translation-only manual fine-tuning end")
-        return transform
-    else:
-        return None
-
-
+    return transform
 def perform_rigid_registration(fixed_image, moving_image, initial_transform, fixed_mask=None, moving_mask=None):
     """Perform rigid registration of two images using multi-resolution masked MI.
 
@@ -780,7 +743,7 @@ def _calc_nmi(fixed_img, moving_img, transform, fixed_mask=None, moving_mask=Non
 def perform_registration(current_directory, patient_id, rtplan_label,
                          selected_series_uid=None, selected_modality=None,
                          moving_series_uid=None, moving_modality=None,
-                         confirm_fn=None, manual_fine_tuning=True,
+                         confirm_fn=None,
                          viewer_fn=None):
     print(f"{get_datetime()} Starting registration process...")
     start_time = time.time()
@@ -889,30 +852,14 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     normalized_metric_value = _calc_nmi(iso_fixed, iso_moving, prealign_transform, fixed_mask, moving_mask)
     print(f"{get_datetime()} Final normalized mutual information (Studholme): {normalized_metric_value:.4f}")
 
-    # Fine-tuning
-    if manual_fine_tuning:
-        fine_tuned_transform = tune_initial_registration(
-            iso_fixed,
-            iso_moving,
-            prealign_transform,
-            mode='manual',
-            pad_slices=pad_slices,
-            fixed_modality=fixed_modality,
-            moving_modality=moving_modality,
-        )
-    else:
-        # translation-only exhaustive search
-        fine_tuned_transform = tune_initial_registration(
-            iso_fixed,
-            iso_moving,
-            fixed_mask,
-            moving_mask,
-            prealign_transform,
-            mode='auto',
-            pad_slices=pad_slices,
-            fixed_modality=fixed_modality,
-            moving_modality=moving_modality,
-        )
+    # Fine-tuning (automatic translation-only exhaustive search)
+    fine_tuned_transform = tune_initial_registration(
+        iso_fixed,
+        iso_moving,
+        fixed_mask,
+        moving_mask,
+        prealign_transform,
+    )
 
     # Fine-tuned prealignment
     normalized_metric_value = _calc_nmi(iso_fixed, iso_moving, fine_tuned_transform, fixed_mask, moving_mask)
@@ -979,7 +926,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         "timestamp": datetime.datetime.now().isoformat(),
         "fixed_series_description": fixed_series_description,
         "moving_series_description": moving_series_description,
-        "registration_type": "semi-automatic" if manual_fine_tuning else "automatic",
+        "registration_type": "automatic",
         "cost_function": registration_metric_value,
         "normalized_mutual_information": normalized_metric_value,
         "initial_transform": ",".join(f"{v:.2f}" for v in prealign_transform_translation),
@@ -1226,14 +1173,6 @@ class MultiViewOverlay:
         self.slice_y = self.fixed.shape[1] // 2
         self.slice_x = self.fixed.shape[2] // 2
 
-        # manual shifts (in slices)
-        self.shift_z = 0
-        self.shift_y = 0
-        self.shift_x = 0
-        max_shift_z = max(self.fixed.shape[0], self.moving.shape[0]) // 2
-        max_shift_y = max(self.fixed.shape[1], self.moving.shape[1]) // 2
-        max_shift_x = max(self.fixed.shape[2], self.moving.shape[2]) // 2
-
         # compute extents for aspect-correct display based on the
         # combined range of both images
         range_x = max(self.fixed.shape[2], self.moving.shape[2]) * self.spacing[0]
@@ -1304,37 +1243,6 @@ class MultiViewOverlay:
         self.slider_alpha = Slider(slider_ax, 'Overlay', 0.0, 1.0, valinit=self.alpha)
         self.slider_alpha.on_changed(self.update_alpha)
 
-        # shift sliders (X above Y above Z)
-        shift_ax_x = self.fig.add_axes([0.25, 0.07, 0.5, 0.03])
-        self.slider_shift_x = Slider(
-            shift_ax_x,
-            'X Shift (slices)',
-            -max_shift_x, max_shift_x,
-            valinit=self.shift_x,
-            valstep=1
-        )
-        self.slider_shift_x.on_changed(self.update_shift_x)
-
-        shift_ax_y = self.fig.add_axes([0.25, 0.04, 0.5, 0.03])
-        self.slider_shift_y = Slider(
-            shift_ax_y,
-            'Y Shift (slices)',
-            -max_shift_y, max_shift_y,
-            valinit=self.shift_y,
-            valstep=1
-        )
-        self.slider_shift_y.on_changed(self.update_shift_y)
-
-        shift_ax_z = self.fig.add_axes([0.25, 0.01, 0.5, 0.03])
-        self.slider_shift_z = Slider(
-            shift_ax_z,
-            'Z Shift (slices)',
-            -max_shift_z, max_shift_z,
-            valinit=self.shift_z,
-            valstep=1
-        )
-        self.slider_shift_z.on_changed(self.update_shift_z)
-
         self.fig.canvas.mpl_connect('scroll_event', self.on_scroll)
 
     def show(self):
@@ -1370,59 +1278,27 @@ class MultiViewOverlay:
                                          self.moving_vmin, self.moving_vmax)
         return (1 - self.alpha) * fixed_rgb + self.alpha * moving_rgb
 
-    def _shift_slice(self, array, shift_y=0, shift_x=0):
-        """Shift a 2-D slice without wrapping around."""
-        shift_y = int(shift_y)
-        shift_x = int(shift_x)
-        out = np.full_like(array, self.fill_value)
-
-        if shift_y >= 0:
-            ys = slice(0, array.shape[0] - shift_y)
-            yd = slice(shift_y, array.shape[0])
-        else:
-            ys = slice(-shift_y, array.shape[0])
-            yd = slice(0, array.shape[0] + shift_y)
-
-        if shift_x >= 0:
-            xs = slice(0, array.shape[1] - shift_x)
-            xd = slice(shift_x, array.shape[1])
-        else:
-            xs = slice(-shift_x, array.shape[1])
-            xd = slice(0, array.shape[1] + shift_x)
-
-        out[yd, xd] = array[ys, xs]
-        return out
-
     def get_transverse_slice(self):
         z = int(self.slice_z)
         f_slc = self.fixed[z, :, :]
 
-        # slice from the moving volume respecting the shift without wrapping
-        mz = z - int(self.shift_z)
-        if 0 <= mz < self.moving.shape[0]:
-            m_slc = self.moving[mz, :, :]
+        # slice from the moving volume without shift
+        if 0 <= z < self.moving.shape[0]:
+            m_slc = self.moving[z, :, :]
         else:
             m_slc = np.full_like(self.moving[0], self.fill_value)
-
-        if self.shift_y or self.shift_x:
-            m_slc = self._shift_slice(m_slc, self.shift_y, self.shift_x)
 
         return self.blend_slices(f_slc, m_slc)
 
     def get_coronal_slice(self):
-        # shift affects Z (axis 0) and Y (axis 1)
         y = int(self.slice_y)
         f_slc = self.fixed[:, y, :]
 
         # select slice from moving volume without wrap-around
-        my = y - int(self.shift_y)
-        if 0 <= my < self.moving.shape[1]:
-            m_slc = self.moving[:, my, :]
+        if 0 <= y < self.moving.shape[1]:
+            m_slc = self.moving[:, y, :]
         else:
             m_slc = np.full_like(self.moving[:, 0, :], self.fill_value)
-
-        if self.shift_z or self.shift_x:
-            m_slc = self._shift_slice(m_slc, self.shift_z, self.shift_x)
 
         return self.blend_slices(f_slc, m_slc)
 
@@ -1430,31 +1306,15 @@ class MultiViewOverlay:
         x = int(self.slice_x)
         f_slc = self.fixed[:, :, x]
 
-        mx = x - int(self.shift_x)
-        if 0 <= mx < self.moving.shape[2]:
-            m_slc = self.moving[:, :, mx]
+        if 0 <= x < self.moving.shape[2]:
+            m_slc = self.moving[:, :, x]
         else:
             m_slc = np.full_like(self.moving[:, :, 0], self.fill_value)
-
-        if self.shift_z or self.shift_y:
-            m_slc = self._shift_slice(m_slc, self.shift_z, self.shift_y)
 
         return self.blend_slices(f_slc, m_slc)
 
     def update_alpha(self, val):
         self.alpha = val
-        self.update_display()
-
-    def update_shift_z(self, val):
-        self.shift_z = val
-        self.update_display()
-
-    def update_shift_y(self, val):
-        self.shift_y = val
-        self.update_display()
-
-    def update_shift_x(self, val):
-        self.shift_x = val
         self.update_display()
 
     def update_display(self):
@@ -1536,4 +1396,4 @@ def run_viewer(
     if info_parts:
         overlay.fig.suptitle(" | ".join(info_parts), fontsize=14)
     overlay.show()
-    return overlay.shift_z, overlay.shift_y, overlay.shift_x
+    return None
