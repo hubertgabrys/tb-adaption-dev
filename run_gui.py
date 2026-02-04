@@ -1,3 +1,4 @@
+import datetime
 import os
 import sys
 import time
@@ -245,6 +246,43 @@ def get_patient_name(directory_path: str) -> str:
             except Exception:
                 pass
     return ""
+
+
+def _extract_dicom_date(ds) -> str:
+    """Return a YYYYMMDD date string from common DICOM date fields, or empty."""
+
+    for attr in (
+        "SeriesDate",
+        "StudyDate",
+        "AcquisitionDate",
+        "ContentDate",
+        "InstanceCreationDate",
+    ):
+        value = getattr(ds, attr, None)
+        if not value:
+            continue
+        text = "".join(ch for ch in str(value) if ch.isdigit())
+        if len(text) >= 8:
+            return text[:8]
+    return ""
+
+
+def _has_old_dicom_files(directory: str, today_yyyymmdd: str) -> bool:
+    """Return True if any DICOM file has a date older than today."""
+
+    for root_dir, _, files in os.walk(directory):
+        for fname in files:
+            if not fname.lower().endswith(".dcm"):
+                continue
+            fpath = os.path.join(root_dir, fname)
+            try:
+                ds = pydicom.dcmread(fpath, stop_before_pixels=True, force=True)
+            except Exception:
+                continue
+            dcm_date = _extract_dicom_date(ds)
+            if dcm_date and dcm_date < today_yyyymmdd:
+                return True
+    return False
 
 
 def main():
@@ -692,6 +730,16 @@ def main():
                         f"Input directory '{input_dir}' does not exist"
                     )
                 wait_for_stable_imaging(str(input_dir))
+                today_yyyymmdd = datetime.date.today().strftime("%Y%m%d")
+                if _has_old_dicom_files(str(input_dir), today_yyyymmdd):
+                    def warn_and_stop():
+                        messagebox.showwarning(
+                            "Warning",
+                            "DICOM files older than today were detected and they should be deleted before proceeding.",
+                        )
+                        if automation_state["active"]:
+                            stop_full_automation(from_internal=True)
+                    run_on_tk_thread(warn_and_stop, wait=True)
                 rename_all_dicom_files(str(input_dir))
                 if check_if_ct_present(str(input_dir)) and not ct_already_resampled(str(input_dir)):
                     print(f"{get_datetime()} Resampling sCT...")
