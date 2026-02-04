@@ -318,6 +318,7 @@ def main():
 
     root = tk.Tk()
     root.title("ARTEMIS Preprocessing")
+    # root.geometry("1200x900")
 
     if rtplan_label and rtplan_label[-1].isalpha() and rtplan_label[-1].isupper():
         messagebox.showwarning(
@@ -383,7 +384,7 @@ def main():
     # Console output widget
     console_label = tk.Label(right_panel, text="Console:")
     console_label.grid(row=1, column=0, sticky="w", pady=(10, 0))
-    console = ScrolledText(right_panel, state="disabled", width=140, height=14)
+    console = ScrolledText(right_panel, state="disabled", width=140, height=18)
     console.grid(row=2, column=0, sticky="nsew")
 
     # Redirect stdout and stderr to the console widget
