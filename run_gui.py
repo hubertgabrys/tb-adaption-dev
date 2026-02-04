@@ -15,7 +15,7 @@ from preprocessing import (
 from register import get_base_plan, perform_registration, run_viewer
 from tkinter import messagebox
 from tkinter import ttk
-from resampling import resample_ct
+from resampling import resample_ct, resample_mr_series_by_description
 from export import send_files_to_aria
 from utils import (
     load_environment,
@@ -627,7 +627,12 @@ def main():
             series_info = local_series
             references_map = references
             latest_imaging_uids = set(imaging_uids)
-            display_uids = imaging_uids + registration_uids
+            rtstruct_uids = [
+                uid
+                for uid, info in local_series.items()
+                if info.get("modality") == "RTSTRUCT"
+            ]
+            display_uids = imaging_uids + registration_uids + rtstruct_uids
 
             for widget in series_frame.winfo_children():
                 widget.destroy()
@@ -684,6 +689,12 @@ def main():
                 if check_if_ct_present(str(input_dir)) and not ct_already_resampled(str(input_dir)):
                     print(f"{get_datetime()} Resampling sCT...")
                     resample_ct(str(input_dir))
+                print(f"{get_datetime()} Resampling MR sCT_sp_Pel_T2...")
+                resample_mr_series_by_description(
+                    str(input_dir),
+                    series_description="sCT_sp_Pel_T2",
+                    target_slice_thickness=3.0,
+                )
 
                 local_series = list_dicom_series(str(input_dir))
                 if not local_series:

@@ -5,8 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import SimpleITK as sitk
 import pydicom
-from pydicom.uid import generate_uid
 from pydicom.tag import Tag
+from pydicom.uid import generate_uid
 
 from utils import get_datetime
 
@@ -20,6 +20,15 @@ def get_dicom_value(ds, tag, default=""):
     if value in (None, "", b""):
         return default
     return value
+
+
+def _format_cs_value(value):
+    """Format CS (Code String) values without Python list/quote artifacts."""
+    if value in (None, "", b""):
+        return ""
+    if isinstance(value, (list, tuple)):
+        return "\\".join(str(item) for item in value if item not in (None, "", b""))
+    return str(value)
 
 
 def move_original_ct(folder_path):
@@ -75,6 +84,36 @@ def load_dicom_series(folder_path: str) -> sitk.Image:
     return image
 
 
+def _sanitize_folder_component(value: str) -> str:
+    """Make a safe folder name component from a DICOM string."""
+    value = (value or "").strip()
+    if not value:
+        return "unknown"
+    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in value)
+
+
+def _find_series_by_description(folder_path: str, modality: str, series_description: str):
+    """Return matching GDCM series entries (series_id, files, header)."""
+    reader = sitk.ImageSeriesReader()
+    series_ids = reader.GetGDCMSeriesIDs(folder_path) or []
+    matches = []
+    for series_id in series_ids:
+        file_names = reader.GetGDCMSeriesFileNames(folder_path, series_id)
+        if not file_names:
+            continue
+        try:
+            header = pydicom.dcmread(file_names[0], stop_before_pixels=True)
+        except Exception:
+            continue
+        if getattr(header, "Modality", "").strip() != modality:
+            continue
+        desc = getattr(header, "SeriesDescription", "").strip()
+        if desc != series_description:
+            continue
+        matches.append((series_id, file_names, header))
+    return matches
+
+
 def delete_folder(folder_path):
     """
     Deletes the specified folder and all its contents if it exists.
@@ -83,7 +122,7 @@ def delete_folder(folder_path):
         shutil.rmtree(folder_path)
 
 
-def resample_image_to_resolution(image, new_spacing):
+def resample_image_to_resolution(image, new_spacing, default_pixel_value=-1024):
     """
     Resamples a 3D SimpleITK image to the given user-defined resolution (voxel dimensions).
 
@@ -116,7 +155,7 @@ def resample_image_to_resolution(image, new_spacing):
 
     # Set the interpolator (use linear interpolation for continuous image values)
     resampler.SetInterpolator(sitk.sitkLinear)
-    resampler.SetDefaultPixelValue(-1024)
+    resampler.SetDefaultPixelValue(default_pixel_value)
 
     # Set the output origin and direction the same as the original image
     resampler.SetOutputOrigin(image.GetOrigin())
@@ -131,116 +170,6 @@ def resample_image_to_resolution(image, new_spacing):
     print(f"  Resampled image spacing: {[round(e, 1) for e in resampled_image.GetSpacing()]}")
 
     return resampled_image
-
-
-def save_resampled_image_as_dicom(resampled_CT, input_folder, output_folder):
-    """
-    Save the resampled 3D image as a series of DICOM files, with most DICOM tags copied from the original image.
-
-    Parameters:
-    - resampled_CT: The resampled 3D SimpleITK image to save.
-    - original_CT: The original 3D SimpleITK image to copy DICOM tags from.
-    - output_folder: The folder to save the series of DICOM slices.
-    """
-
-    # Load the original CT to get the DICOM tags
-    dicom_files = [f for f in os.listdir(input_folder) if f.startswith("CT") and f.endswith(".dcm")]
-
-    # Ensure there are matching DICOM files
-    if not dicom_files:
-        raise FileNotFoundError("No DICOM files starting with 'CT' and ending with '.dcm' found in the folder.")
-
-    # Convert relative file paths to absolute paths
-    dicom_file_paths = [os.path.join(input_folder, f) for f in dicom_files]
-
-    # Load the first slice with pydicom to retreive tags
-    original_CT_pydicom = pydicom.dcmread(dicom_file_paths[0])
-
-
-    # Copy relevant tags from the original meta-data dictionary (private tags are
-    # also accessible).
-    # Generate a new Series Instance UID for the resampled output
-    new_series_uid = generate_uid()
-    # Series DICOM tags to copy
-    patient_name_value = get_dicom_value(original_CT_pydicom, Tag(0x00100010))
-    if patient_name_value not in (None, ""):
-        patient_name_value = str(patient_name_value)
-
-    series_tag_values = [
-        ("0008|0005", get_dicom_value(original_CT_pydicom, Tag(0x00080005))),  # Specific Character Set
-        ("0018|0060", get_dicom_value(original_CT_pydicom, Tag(0x00180060))),  # kVp
-        ("0010|0010", patient_name_value),  # Patient Name
-        ("0010|0020", get_dicom_value(original_CT_pydicom, Tag(0x00100020))),  # Patient ID
-        ("0010|0030", get_dicom_value(original_CT_pydicom, Tag(0x00100030))),  # Patient Birth Date
-        ("0010|0040", get_dicom_value(original_CT_pydicom, Tag(0x00100040))),  # Patient Sex
-        ("0020|000d", get_dicom_value(original_CT_pydicom, Tag(0x0020000d))),  # Study Instance UID, for machine consumption
-        ("0020|0010", get_dicom_value(original_CT_pydicom, Tag(0x00200010))),  # Study ID, for human consumption
-        ("0008|0020", get_dicom_value(original_CT_pydicom, Tag(0x00080020))),  # Study Date
-        ("0008|0021", get_dicom_value(original_CT_pydicom, Tag(0x00080021))),  # Series Date
-        ("0008|0022", get_dicom_value(original_CT_pydicom, Tag(0x00080022))),  # Acquisition Date
-        ("0008|0030", get_dicom_value(original_CT_pydicom, Tag(0x00080030))),  # Study Time
-        ("0008|0031", get_dicom_value(original_CT_pydicom, Tag(0x00080031))),  # Series time
-        ("0008|0032", get_dicom_value(original_CT_pydicom, Tag(0x00080032))),  # Acquisition time
-        ("0008|0050", get_dicom_value(original_CT_pydicom, Tag(0x00080050))),  # Accession Number
-        ("0008|0060", get_dicom_value(original_CT_pydicom, Tag(0x00080060))),  # Modality
-        ("0008|0064", get_dicom_value(original_CT_pydicom, Tag(0x00080064))),  # Conversion Type
-        ("0028|1050", get_dicom_value(original_CT_pydicom, Tag(0x00281050))),  # Window center
-        ("0028|1051", get_dicom_value(original_CT_pydicom, Tag(0x00281051))),  # Window width
-        ("0028|1052", get_dicom_value(original_CT_pydicom, Tag(0x00281052))),  # Rescale Intercept
-        ("0028|1053", get_dicom_value(original_CT_pydicom, Tag(0x00281053))),  # Rescale Slope
-        ("0028|1054", get_dicom_value(original_CT_pydicom, Tag(0x00281054))),  # Rescale Type
-        ("0018|5100", get_dicom_value(original_CT_pydicom, Tag(0x00185100))),  # Patient Position
-        ("0020|0052", get_dicom_value(original_CT_pydicom, Tag(0x00200052))),  # Frame of Reference UID
-        ("0008|0080", get_dicom_value(original_CT_pydicom, Tag(0x00080080))),  # Institution
-        ("0008|1030", get_dicom_value(original_CT_pydicom, Tag(0x00081030))),  # Study description
-        ("0020|0011", get_dicom_value(original_CT_pydicom, Tag(0x00200011))),  # Series number
-        ("0020|0012", get_dicom_value(original_CT_pydicom, Tag(0x00200012))),  # Acquisition number
-        ("0020|1040", get_dicom_value(original_CT_pydicom, Tag(0x00201040))),  # Position reference indicator
-        ("0020|000e", new_series_uid),  # Series Instance UID (new)
-        ("0008|103e", f"{get_dicom_value(original_CT_pydicom, Tag(0x0008103e))} Resampled"),  # Series description
-        # ("0008|0070", get_dicom_value(original_CT_pydicom, Tag(0x00080070))),  # Manufacturer
-        ("0008|1090", get_dicom_value(original_CT_pydicom, Tag(0x00081090))),  # Manufacturer model name
-        ("0018|1000", get_dicom_value(original_CT_pydicom, Tag(0x00181000))),  # Device Serial Number
-        # ("0008|0070", "Spectronic Medical AB / MIM Software"),  # Manufacturer
-        # ("0008|1090", "Freemax"),  # Manufacturer model name
-        # ("0018|1000", "206207"),  # Device Serial Number
-
-    ]
-
-    if get_dicom_value(original_CT_pydicom, Tag(0x00080070)) == "Spectronic Medical AB":
-        series_tag_values.append(("0008|0070", "Spectronic Medical AB / MIM Software"))
-    else:
-        series_tag_values.append(("0008|0070", get_dicom_value(original_CT_pydicom, Tag(0x00080070))))
-
-    spacing_resampled = resampled_CT.GetSpacing()  # (spacing_x, spacing_y, spacing_z)
-
-    def write_slice(i: int) -> None:
-        image_slice = resampled_CT[:, :, i]
-
-        # Tags shared by the series.
-        for tag, value in series_tag_values:
-            image_slice.SetMetaData(tag, str(value))
-
-        # Slice specific tags.
-        image_slice.SetMetaData("0008|0012", time.strftime("%Y%m%d"))  # Instance Creation Date
-        image_slice.SetMetaData("0008|0013", time.strftime("%H%M%S"))  # Instance Creation Time
-        image_slice.SetMetaData(
-            "0020|0032",
-            "\\".join(map(str, resampled_CT.TransformIndexToPhysicalPoint((0, 0, i)))),
-        )
-        image_slice.SetMetaData("0020|0013", str(i + 1))  # Instance Number
-        image_slice.SetMetaData("0008|0018", generate_uid())  # SOP Instance UID
-        image_slice.SetMetaData("0018|0050", f"{spacing_resampled[2]:.6f}")  # Slice Thickness
-        image_slice.SetMetaData("0008|0008", "DERIVED\\SECONDARY\\AXIAL")  # Image type
-
-        filename_save = os.path.join(output_folder, f"CT_Resampled_Slice_{i:04d}.dcm")
-        local_writer = sitk.ImageFileWriter()
-        local_writer.KeepOriginalImageUIDOn()
-        local_writer.SetFileName(filename_save)
-        local_writer.Execute(image_slice)
-
-    with ThreadPoolExecutor() as executor:
-        list(executor.map(write_slice, range(resampled_CT.GetDepth())))
 
 
 def resample_ct(current_folder):
@@ -288,14 +217,418 @@ def resample_ct(current_folder):
     # Step 4: Resample to a user-defined resolution
     print(f"{get_datetime()} Resampling to the 1.5x1.5x1.5 mm resolution")
     new_spacing = [1.5, 1.5, 1.5]  # in mm
-    resampled_CT = resample_image_to_resolution(original_CT, new_spacing)
+    resampled_CT = resample_image_to_resolution(
+        original_CT,
+        new_spacing,
+        default_pixel_value=-1024,
+    )
 
     # Step 5: Write the resampled CT to the subfolder
     print(f"{get_datetime()} Saving the resampled sCT")
-    save_resampled_image_as_dicom(resampled_CT, moved_original_CT_folder, current_folder)
+    save_resampled_ct_as_dicom(resampled_CT, moved_original_CT_folder, current_folder)
 
     # Step 6: Delete the original CT to avoid problems
     print(f"{get_datetime()} Deleting the original CT")
     delete_folder(moved_original_CT_folder)
 
     return "success"
+
+
+def resample_mr_series_by_description(
+    current_folder,
+    series_description="sCT_sp_Pel_T2",
+    target_slice_thickness=3.0,
+):
+    """
+    Resample MR series matching *series_description* to target slice thickness,
+    keeping in-plane resolution unchanged.
+    """
+    print(
+        f"{get_datetime()} Checking MR series for resampling: '{series_description}'"
+    )
+    matches = _find_series_by_description(
+        current_folder,
+        modality="MR",
+        series_description=series_description,
+    )
+    if not matches:
+        print(
+            f"{get_datetime()} No matching MR series found -> skipping resampling"
+        )
+        return "aborted"
+
+    result_state = "aborted"
+    for _, file_names, header in matches:
+        try:
+            spacing_x, spacing_y = map(float, header.PixelSpacing)
+        except Exception:
+            spacing_x = spacing_y = None
+        try:
+            spacing_z = float(getattr(header, "SliceThickness", 0) or 0)
+        except Exception:
+            spacing_z = 0.0
+
+        if spacing_z and abs(spacing_z - target_slice_thickness) < 1e-3:
+            print(
+                f"{get_datetime()} MR series already at {target_slice_thickness:.1f} mm -> skipping"
+            )
+            continue
+
+        series_uid = getattr(header, "SeriesInstanceUID", "")
+        series_uid_suffix = series_uid[-8:] if series_uid else "series"
+        safe_desc = _sanitize_folder_component(series_description)
+        parent_dir = os.path.abspath(os.path.join(current_folder, os.pardir))
+        original_folder_name = (
+            f"{os.path.basename(current_folder)}_original_MR_{safe_desc}_{series_uid_suffix}"
+        )
+        moved_series_folder = os.path.join(parent_dir, original_folder_name)
+
+        if os.path.exists(moved_series_folder):
+            shutil.rmtree(moved_series_folder)
+        os.makedirs(moved_series_folder, exist_ok=True)
+
+        for src_path in file_names:
+            dst_path = os.path.join(moved_series_folder, os.path.basename(src_path))
+            shutil.move(src_path, dst_path)
+
+        print(
+            f"{get_datetime()} Resampling MR series '{series_description}'"
+        )
+        original_series = load_dicom_series(moved_series_folder)
+        if spacing_x is None or spacing_y is None:
+            spacing_x, spacing_y, _ = original_series.GetSpacing()
+
+        new_spacing = [spacing_x, spacing_y, target_slice_thickness]
+        resampled_series = resample_image_to_resolution(
+            original_series,
+            new_spacing,
+            default_pixel_value=0,
+        )
+
+        save_resampled_mr_as_dicom(
+            resampled_series,
+            moved_series_folder,
+            current_folder,
+            source_prefix=None,
+            output_prefix="MR_Resampled_Slice_",
+            series_description_suffix=" Resampled",
+        )
+
+        delete_folder(moved_series_folder)
+        result_state = "success"
+
+    return result_state
+
+
+def _format_meta_value(value) -> str:
+    """
+    Convert pydicom values (including MultiValue / list) into DICOM-style strings.
+    Ensures multi-valued attributes become backslash-separated (e.g. "SP\\SK"),
+    not Python list repr (e.g. "['SP', 'SK']").
+    """
+    if value in (None, "", b""):
+        return ""
+
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except Exception:
+            return value.decode("latin-1", errors="replace")
+
+    # Handle pydicom MultiValue (and similar list-like objects) without importing pydicom internals
+    # and without accidentally iterating over strings/bytes.
+    if not isinstance(value, (str, bytes)) and hasattr(value, "__iter__"):
+        items = [v for v in value if v not in (None, "", b"")]
+        # If it's truly multi-valued, join with backslash; if it's a scalar iterable (rare), str() it.
+        if len(items) > 1:
+            return "\\".join(str(v) for v in items)
+        if len(items) == 1:
+            return str(items[0])
+        return ""
+
+    s = str(value)
+
+    # Optional but very cheap: fix already-stringified python-list artifacts like "['SP', 'SK']"
+    # (in case something upstream already called str() on a MultiValue).
+    if s.startswith("[") and s.endswith("]") and ("'" in s or '"' in s) and "," in s:
+        inner = s[1:-1]
+        parts = [p.strip().strip("'").strip('"') for p in inner.split(",")]
+        parts = [p for p in parts if p]
+        if len(parts) > 1:
+            return "\\".join(parts)
+        if len(parts) == 1:
+            return parts[0]
+        return ""
+
+    return s
+
+
+def _get_dicom_value(ds, tag: Tag, default=""):
+    elem = ds.get(tag)
+    if elem is None:
+        return default
+    v = elem.value
+    if v in (None, "", b""):
+        return default
+    return v
+
+
+def _infer_specific_charset(src_ds: pydicom.Dataset) -> str:
+    """
+    Choose SpecificCharacterSet:
+      - copy (0008,0005) if present
+      - otherwise, if any common text field is non-ascii, default to UTF-8 (ISO_IR 192)
+    """
+    cs = _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x0005), ""))
+    if cs:
+        return cs
+
+    # check a few high-impact text tags (extend as needed)
+    text_tags = [
+        Tag(0x0010, 0x0010),  # PatientName
+        Tag(0x0008, 0x0080),  # InstitutionName
+        Tag(0x0008, 0x1030),  # StudyDescription
+        Tag(0x0008, 0x103E),  # SeriesDescription
+    ]
+    for t in text_tags:
+        v = _get_dicom_value(src_ds, t, "")
+        if not v:
+            continue
+        s = _format_meta_value(v)
+        try:
+            s.encode("ascii")
+        except Exception:
+            return "ISO_IR 192"
+
+    return ""
+
+
+def _read_source_header(input_folder: str, *, source_prefix: str | None) -> pydicom.Dataset:
+    dicom_files = [
+        f for f in os.listdir(input_folder)
+        if f.lower().endswith(".dcm") and (source_prefix is None or f.startswith(source_prefix))
+    ]
+    if not dicom_files:
+        raise FileNotFoundError("No DICOM files found in input_folder matching the expected prefix.")
+    dicom_files.sort()
+    first_path = os.path.join(input_folder, dicom_files[0])
+    return pydicom.dcmread(first_path, stop_before_pixels=True)
+
+
+def _sitk_direction_to_iop(direction_3x3) -> str:
+    """
+    SimpleITK direction is a 3x3 matrix flattened row-major:
+      (d00,d01,d02, d10,d11,d12, d20,d21,d22)
+    ITK convention: columns are the direction cosines of image axes (i, j, k).
+    DICOM IOP expects: row_cosines (i axis) then col_cosines (j axis):
+      [d00,d10,d20, d01,d11,d21]
+    """
+    d = direction_3x3
+    return "\\".join(map(str, [d[0], d[3], d[6], d[1], d[4], d[7]]))
+
+
+def _build_common_series_tags(
+    src_ds: pydicom.Dataset,
+    *,
+    new_series_uid: str,
+    series_description_suffix: str,
+) -> list[tuple[str, str]]:
+    specific_charset = _infer_specific_charset(src_ds)
+
+    # Manufacturer quirk preserved from your original code
+    manufacturer = _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x0070), ""))
+    if manufacturer == "Spectronic Medical AB":
+        manufacturer = "Spectronic Medical AB / MIM Software"
+
+    base = [
+        ("0008|0005", specific_charset),  # Specific Character Set
+
+        # Patient
+        ("0010|0010", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0010, 0x0010), ""))),  # Patient Name
+        ("0010|0020", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0010, 0x0020), ""))),  # Patient ID
+        ("0010|0030", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0010, 0x0030), ""))),  # Patient Birth Date
+        ("0010|0040", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0010, 0x0040), ""))),  # Patient Sex
+
+        # Study
+        ("0020|000d", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0020, 0x000D), ""))),  # Study Instance UID
+        ("0020|0010", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0020, 0x0010), ""))),  # Study ID
+        ("0008|0020", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x0020), ""))),  # Study Date
+        ("0008|0030", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x0030), ""))),  # Study Time
+        ("0008|0050", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x0050), ""))),  # Accession Number
+        ("0008|0080", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x0080), ""))),  # Institution
+        ("0008|1030", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x1030), ""))),  # Study description
+
+        # Series
+        ("0020|000e", new_series_uid),  # Series Instance UID (new)
+        ("0008|0060", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x0060), ""))),  # Modality
+        ("0008|0070", manufacturer),  # Manufacturer
+        ("0008|1090", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x1090), ""))),  # Model
+        ("0018|1000", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0018, 0x1000), ""))),  # Device serial
+        ("0020|0011", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0020, 0x0011), ""))),  # Series number
+        ("0020|0012", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0020, 0x0012), ""))),  # Acquisition number
+        ("0020|0052", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0020, 0x0052), ""))),  # Frame of Reference UID
+        ("0020|1040", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0020, 0x1040), ""))),  # Position ref indicator
+        ("0008|103e", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x103E), "")) + series_description_suffix),
+    ]
+
+    # Avoid writing empty strings as metadata if possible
+    return [(t, v) for (t, v) in base if v != ""]
+
+
+def _build_ct_series_tags(src_ds: pydicom.Dataset) -> list[tuple[str, str]]:
+    # CT-specific tags (keep your current set; expand if needed)
+    tags = [
+        ("0018|0060", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0018, 0x0060), ""))),  # kVp
+        ("0018|5100", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0018, 0x5100), ""))),  # Patient Position
+
+        ("0028|1050", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0028, 0x1050), ""))),  # Window center
+        ("0028|1051", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0028, 0x1051), ""))),  # Window width
+        ("0028|1052", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0028, 0x1052), ""))),  # Rescale Intercept
+        ("0028|1053", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0028, 0x1053), ""))),  # Rescale Slope
+        ("0028|1054", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0028, 0x1054), ""))),  # Rescale Type
+
+        ("0008|0064", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x0064), ""))),  # Conversion Type
+        ("0018|0020", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0018, 0x0020), ""))),  # Scanning Sequence
+        ("0018|0021", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0018, 0x0021), ""))),  # Sequence Variant
+    ]
+    return [(t, v) for (t, v) in tags if v != ""]
+
+
+def _build_mr_series_tags(src_ds: pydicom.Dataset) -> list[tuple[str, str]]:
+    # MR-specific tags (minimal/safe set; extend if your consumers rely on more)
+    tags = [
+        ("0018|0020", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0018, 0x0020), ""))),  # Scanning Sequence
+        ("0018|0021", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0018, 0x0021), ""))),  # Sequence Variant
+        ("0018|0022", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0018, 0x0022), ""))),  # Scan Options
+        ("0018|0023", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0018, 0x0023), ""))),  # MR Acquisition Type
+        ("0018|0080", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0018, 0x0080), ""))),  # TR
+        ("0018|0081", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0018, 0x0081), ""))),  # TE
+        ("0018|1314", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0018, 0x1314), ""))),  # Flip Angle
+        ("0018|1312", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0018, 0x1312), ""))),  # Phase Encoding Dir
+        ("0020|1040", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0020, 0x1040), ""))),  # Position Reference Indicator
+    ]
+    return [(t, v) for (t, v) in tags if v != ""]
+
+
+def _write_sitk_volume_as_dicom_series(
+    volume: sitk.Image,
+    *,
+    output_folder: str,
+    output_prefix: str,
+    series_tags: list[tuple[str, str]],
+    default_image_type: str,
+    use_threads: bool = True,
+    max_workers: int | None = None,
+) -> None:
+    os.makedirs(output_folder, exist_ok=True)
+
+    spacing = volume.GetSpacing()          # (sx, sy, sz)
+    direction = volume.GetDirection()
+    iop = _sitk_direction_to_iop(direction)
+
+    # Keep timestamps consistent across slices
+    creation_date = time.strftime("%Y%m%d")
+    creation_time = time.strftime("%H%M%S")
+
+    pixel_spacing = f"{spacing[0]:.6f}\\{spacing[1]:.6f}"
+    slice_thickness = f"{spacing[2]:.6f}"
+    spacing_between_slices = f"{spacing[2]:.6f}"
+
+    def write_slice(k: int) -> None:
+        img2d = volume[:, :, k]
+
+        # Series-level tags
+        for tag, val in series_tags:
+            img2d.SetMetaData(tag, val)
+
+        # Geometry (explicit)
+        img2d.SetMetaData("0028|0030", pixel_spacing)            # Pixel Spacing
+        img2d.SetMetaData("0020|0037", iop)                      # Image Orientation (Patient)
+        img2d.SetMetaData("0018|0050", slice_thickness)          # Slice Thickness
+        img2d.SetMetaData("0018|0088", spacing_between_slices)   # Spacing Between Slices (if used)
+
+        # Slice-specific tags
+        img2d.SetMetaData("0008|0012", creation_date)            # Instance Creation Date
+        img2d.SetMetaData("0008|0013", creation_time)            # Instance Creation Time
+        img2d.SetMetaData("0020|0032", "\\".join(map(str, volume.TransformIndexToPhysicalPoint((0, 0, k)))))  # IPP
+        img2d.SetMetaData("0020|0013", str(k + 1))               # Instance Number
+        img2d.SetMetaData("0008|0018", generate_uid())           # SOP Instance UID
+        img2d.SetMetaData("0008|0008", default_image_type)       # Image Type
+
+        out_path = os.path.join(output_folder, f"{output_prefix}{k:04d}.dcm")
+        writer = sitk.ImageFileWriter()
+        writer.KeepOriginalImageUIDOn()
+        writer.SetFileName(out_path)
+        writer.Execute(img2d)
+
+    depth = volume.GetDepth()
+    if use_threads and depth > 1:
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            list(ex.map(write_slice, range(depth)))
+    else:
+        for k in range(depth):
+            write_slice(k)
+
+
+def save_resampled_ct_as_dicom(
+    resampled_ct: sitk.Image,
+    input_folder: str,
+    output_folder: str,
+    *,
+    source_prefix: str = "CT",
+    output_prefix: str = "CT_Resampled_Slice_",
+    series_description_suffix: str = " Resampled",
+    use_threads: bool = True,
+    max_workers: int | None = None,
+) -> None:
+    src_ds = _read_source_header(input_folder, source_prefix=source_prefix)
+
+    new_series_uid = generate_uid()
+    tags = _build_common_series_tags(
+        src_ds,
+        new_series_uid=new_series_uid,
+        series_description_suffix=series_description_suffix,
+    )
+    tags += _build_ct_series_tags(src_ds)
+
+    _write_sitk_volume_as_dicom_series(
+        resampled_ct,
+        output_folder=output_folder,
+        output_prefix=output_prefix,
+        series_tags=tags,
+        default_image_type="DERIVED\\SECONDARY\\AXIAL",
+        use_threads=use_threads,
+        max_workers=max_workers,
+    )
+
+
+def save_resampled_mr_as_dicom(
+    resampled_mr: sitk.Image,
+    input_folder: str,
+    output_folder: str,
+    *,
+    source_prefix: str | None = None,  # allow arbitrary filenames for MR
+    output_prefix: str = "MR_Resampled_Slice_",
+    series_description_suffix: str = " Resampled",
+    use_threads: bool = True,
+    max_workers: int | None = None,
+) -> None:
+    src_ds = _read_source_header(input_folder, source_prefix=source_prefix)
+
+    new_series_uid = generate_uid()
+    tags = _build_common_series_tags(
+        src_ds,
+        new_series_uid=new_series_uid,
+        series_description_suffix=series_description_suffix,
+    )
+    tags += _build_mr_series_tags(src_ds)
+
+    _write_sitk_volume_as_dicom_series(
+        resampled_mr,
+        output_folder=output_folder,
+        output_prefix=output_prefix,
+        series_tags=tags,
+        default_image_type="DERIVED\\SECONDARY",
+        use_threads=use_threads,
+        max_workers=max_workers,
+    )
