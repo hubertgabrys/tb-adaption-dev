@@ -281,6 +281,12 @@ def main():
     root = tk.Tk()
     root.title("ARTEMIS Preprocessing")
 
+    if rtplan_label and rtplan_label[-1].isalpha() and rtplan_label[-1].isupper():
+        messagebox.showwarning(
+            "Warning",
+            "The script has been started from an adapted plan instead of the base plan.",
+        )
+
     # Queue used to marshal callbacks from worker threads back to Tk safely.
     tk_call_queue: queue.Queue = queue.Queue()
 
