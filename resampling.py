@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import SimpleITK as sitk
 import pydicom
+from pydicom.multival import MultiValue
 from pydicom.tag import Tag
 from pydicom.uid import generate_uid
 
@@ -335,11 +336,9 @@ def _format_meta_value(value) -> str:
         except Exception:
             return value.decode("latin-1", errors="replace")
 
-    # Handle pydicom MultiValue (and similar list-like objects) without importing pydicom internals
-    # and without accidentally iterating over strings/bytes.
-    if not isinstance(value, (str, bytes)) and hasattr(value, "__iter__"):
+    # Multi-valued: join with backslash
+    if isinstance(value, (list, tuple, MultiValue)):
         items = [v for v in value if v not in (None, "", b"")]
-        # If it's truly multi-valued, join with backslash; if it's a scalar iterable (rare), str() it.
         if len(items) > 1:
             return "\\".join(str(v) for v in items)
         if len(items) == 1:
@@ -348,8 +347,7 @@ def _format_meta_value(value) -> str:
 
     s = str(value)
 
-    # Optional but very cheap: fix already-stringified python-list artifacts like "['SP', 'SK']"
-    # (in case something upstream already called str() on a MultiValue).
+    # Optional: fix already-stringified python-list artifacts like "['SP', 'SK']"
     if s.startswith("[") and s.endswith("]") and ("'" in s or '"' in s) and "," in s:
         inner = s[1:-1]
         parts = [p.strip().strip("'").strip('"') for p in inner.split(",")]
@@ -375,15 +373,12 @@ def _get_dicom_value(ds, tag: Tag, default=""):
 
 def _infer_specific_charset(src_ds: pydicom.Dataset) -> str:
     """
-    Choose SpecificCharacterSet:
-      - copy (0008,0005) if present
-      - otherwise, if any common text field is non-ascii, default to UTF-8 (ISO_IR 192)
+    Writing via SimpleITK/GDCM: if any written text is non-ASCII, force UTF-8 (ISO_IR 192).
+    Otherwise keep source charset if present, else empty.
     """
-    cs = _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x0005), ""))
-    if cs:
-        return cs
+    src_cs = _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x0005), ""))
 
-    # check a few high-impact text tags (extend as needed)
+    # Check a few high-impact text fields that you write
     text_tags = [
         Tag(0x0010, 0x0010),  # PatientName
         Tag(0x0008, 0x0080),  # InstitutionName
@@ -398,9 +393,10 @@ def _infer_specific_charset(src_ds: pydicom.Dataset) -> str:
         try:
             s.encode("ascii")
         except Exception:
-            return "ISO_IR 192"
+            return "ISO_IR 192"  # force UTF-8 for output
 
-    return ""
+    # ASCII-only: keep original (if any), else empty
+    return src_cs
 
 
 def _read_source_header(input_folder: str, *, source_prefix: str | None) -> pydicom.Dataset:
