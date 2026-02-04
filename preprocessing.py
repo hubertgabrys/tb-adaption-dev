@@ -85,6 +85,21 @@ def process_single_dicom_file(directory_path: str, filename: str) -> None:
         pass
 
 
+def format_dicom_time(value) -> str:
+    """Normalize DICOM TM to HH:MM:SS for display."""
+    if not value:
+        return ""
+    text = str(value).strip()
+    if "." in text:
+        text = text.split(".", 1)[0]
+    text = "".join(ch for ch in text if ch.isdigit())
+    if len(text) < 4:
+        return text
+    text = text.ljust(6, "0")[:6]
+    hh, mm, ss = text[:2], text[2:4], text[4:6]
+    return f"{hh}:{mm}:{ss}"
+
+
 def _extract_series_record(fpath: Path, imaging_only: bool):
     """Read just enough of the header to form one series entry, or None."""
     try:
@@ -102,11 +117,7 @@ def _extract_series_record(fpath: Path, imaging_only: bool):
 
     date = getattr(ds, "SeriesDate", getattr(ds, "StudyDate", ""))
     time = getattr(ds, "SeriesTime", getattr(ds, "StudyTime", ""))
-    # normalize time
-    if time and len(time) >= 4:
-        hh, mm = time[:2], time[2:4]
-        ss = f":{time[4:6]}" if len(time) >= 6 else ""
-        time = f"{hh}:{mm}{ss}"
+    time = format_dicom_time(time)
     desc = getattr(ds, "SeriesDescription", "").strip() or "<no description>"
 
     record = {

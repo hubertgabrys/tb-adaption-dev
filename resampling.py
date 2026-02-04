@@ -456,6 +456,8 @@ def _build_common_series_tags(
 
         # Series
         ("0020|000e", new_series_uid),  # Series Instance UID (new)
+        ("0008|0021", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x0021), ""))),  # Series Date
+        ("0008|0031", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x0031), ""))),  # Series Time
         ("0008|0060", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x0060), ""))),  # Modality
         ("0008|0070", manufacturer),  # Manufacturer
         ("0008|1090", _format_meta_value(_get_dicom_value(src_ds, Tag(0x0008, 0x1090), ""))),  # Model

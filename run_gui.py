@@ -11,6 +11,7 @@ import pydicom
 from preprocessing import (
     list_dicom_series,
     process_single_dicom_file,
+    format_dicom_time,
 )
 from register import get_base_plan, perform_registration, run_viewer
 from tkinter import messagebox
@@ -762,6 +763,10 @@ def main():
                             new_uid = getattr(ds, "SeriesInstanceUID", None)
                             date = getattr(ds, "SeriesDate", getattr(ds, "StudyDate", ""))
                             time_str = getattr(ds, "SeriesTime", getattr(ds, "StudyTime", ""))
+                            if not date or not time_str:
+                                date = date or getattr(ds, "StructureSetDate", "")
+                                time_str = time_str or getattr(ds, "StructureSetTime", "")
+                            time_str = format_dicom_time(time_str)
                             desc = getattr(ds, "SeriesDescription", "").strip() or "<no description>"
                             local_series[new_uid] = {
                                 "date": date,
