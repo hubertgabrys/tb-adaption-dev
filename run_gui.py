@@ -180,6 +180,27 @@ def _copy_structures_process(
     """Run copy_structures in a separate process to keep the UI responsive."""
 
     try:
+        class _QueueWriter:
+            def __init__(self, queue_obj):
+                self.queue = queue_obj
+                self._buffer = ""
+
+            def write(self, text: str) -> None:
+                if not text:
+                    return
+                self._buffer += text
+                while "\n" in self._buffer:
+                    line, self._buffer = self._buffer.split("\n", 1)
+                    self.queue.put(("log", line + "\n"))
+
+            def flush(self) -> None:
+                if self._buffer:
+                    self.queue.put(("log", self._buffer))
+                    self._buffer = ""
+
+        sys.stdout = _QueueWriter(progress_q)
+        sys.stderr = _QueueWriter(progress_q)
+
         rigid_transform = sitk.ReadTransform(transform_path)
 
         def progress_cb(idx, total):
@@ -1178,10 +1199,15 @@ def main():
                         if item is None:
                             finish_copy()
                             return
-                        if isinstance(item, tuple) and item and item[0] == "error":
-                            result_state["error"] = item[1]
-                            result_state["success"] = False
-                            continue
+                        if isinstance(item, tuple) and item:
+                            tag = item[0]
+                            if tag == "error":
+                                result_state["error"] = item[1]
+                                result_state["success"] = False
+                                continue
+                            if tag == "log":
+                                print(item[1], end="")
+                                continue
                         idx, total = item
                         register_progress["maximum"] = total
                         register_progress["value"] = idx
