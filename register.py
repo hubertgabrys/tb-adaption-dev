@@ -958,10 +958,10 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         # so we pass rigid_transform as is.
         create_registration_file(output_reg_file, rigid_transform, fixed_meta, moving_meta,
                                  fixed_files, moving_files)
-        return rigid_transform, normalized_metric_value, used_fixed_uid, used_moving_uid
+        return rigid_transform, normalized_metric_value, used_fixed_uid, used_moving_uid, auto_approved
     else:
         print(f"{get_datetime()} Registration rejected")
-        return None, normalized_metric_value, None, None
+        return None, normalized_metric_value, None, None, auto_approved
 
 
 # --------------------------------------------------------------------

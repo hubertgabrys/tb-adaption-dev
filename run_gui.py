@@ -1,6 +1,8 @@
 import datetime
+import multiprocessing
 import os
 import sys
+import tempfile
 import time
 import traceback
 import tkinter as tk
@@ -8,6 +10,7 @@ from tkinter.scrolledtext import ScrolledText
 from pathlib import Path
 
 import pydicom
+import SimpleITK as sitk
 
 from preprocessing import (
     list_dicom_series,
@@ -163,6 +166,38 @@ def ct_already_resampled(directory: str) -> bool:
         if fname.startswith("CT_Resampled") and fname.lower().endswith(".dcm"):
             return True
     return False
+
+
+def _copy_structures_process(
+    transform_path: str,
+    current_directory: str,
+    patient_id: str,
+    rtplan_label: str,
+    series_uid: str | None,
+    base_series_uid: str | None,
+    progress_q: multiprocessing.Queue,
+) -> None:
+    """Run copy_structures in a separate process to keep the UI responsive."""
+
+    try:
+        rigid_transform = sitk.ReadTransform(transform_path)
+
+        def progress_cb(idx, total):
+            progress_q.put((idx, total))
+
+        copy_structures(
+            current_directory,
+            patient_id,
+            rtplan_label,
+            rigid_transform,
+            series_uid=series_uid,
+            base_series_uid=base_series_uid,
+            progress_callback=progress_cb,
+        )
+    except Exception as exc:
+        progress_q.put(("error", str(exc)))
+    finally:
+        progress_q.put(None)
 
 
 def find_rtstructs_for_series(directory: str, series_uid: str) -> list[str]:
@@ -1027,7 +1062,7 @@ def main():
             """Process the registration outcome on the Tk thread."""
 
             nonlocal last_rigid_transform, last_fixed_uid, last_moving_uid, registration_was_successful
-            rigid_transform, _, used_fixed_uid, used_moving_uid = result
+            rigid_transform, _, used_fixed_uid, used_moving_uid, auto_approved = result
             if not rigid_transform:
                 finalize_failure(rejected=True)
                 return
@@ -1052,6 +1087,9 @@ def main():
             if gc_enabled:
                 gc.disable()
 
+            copy_process = None
+            transform_path = None
+
             def copy_worker():
                 try:
                     print(f"{get_datetime()} Copying the structures...")
@@ -1070,27 +1108,42 @@ def main():
                 finally:
                     progress_q.put(None)
 
-            threading.Thread(target=copy_worker, daemon=True).start()
-
-            def poll_queue():
-                try:
-                    while True:
-                        item = progress_q.get_nowait()
-                        if item is None:
-                            finish_copy()
-                            return
-                        idx, total = item
-                        register_progress["maximum"] = total
-                        register_progress["value"] = idx
-                except queue.Empty:
-                    pass
-                root.after(100, poll_queue)
+            if auto_approved:
+                progress_q = multiprocessing.Queue()
+                fd, transform_path = tempfile.mkstemp(suffix=".tfm")
+                os.close(fd)
+                sitk.WriteTransform(rigid_transform, transform_path)
+                copy_process = multiprocessing.Process(
+                    target=_copy_structures_process,
+                    args=(
+                        transform_path,
+                        str(input_dir),
+                        patient_id,
+                        rtplan_label,
+                        used_fixed_uid,
+                        used_moving_uid,
+                        progress_q,
+                    ),
+                    daemon=True,
+                )
+                copy_process.start()
+            else:
+                threading.Thread(target=copy_worker, daemon=True).start()
 
             def finish_copy():
                 register_progress.grid_remove()
                 if gc_enabled:
                     gc.enable()
                     gc.collect()
+                if copy_process is not None:
+                    copy_process.join(timeout=1)
+                if transform_path and os.path.exists(transform_path):
+                    try:
+                        os.remove(transform_path)
+                    except Exception:
+                        pass
+                if result_state.get("error") is None and not result_state.get("success"):
+                    result_state["success"] = True
                 if result_state.get("success"):
                     copy_status.config(text="\u2705", fg="green")
                 else:
@@ -1117,6 +1170,24 @@ def main():
                     automation_state["registration_completed"] = True
                     automation_state["registration_successful"] = registration_was_successful
                 on_get_images()
+
+            def poll_queue():
+                try:
+                    while True:
+                        item = progress_q.get_nowait()
+                        if item is None:
+                            finish_copy()
+                            return
+                        if isinstance(item, tuple) and item and item[0] == "error":
+                            result_state["error"] = item[1]
+                            result_state["success"] = False
+                            continue
+                        idx, total = item
+                        register_progress["maximum"] = total
+                        register_progress["value"] = idx
+                except queue.Empty:
+                    pass
+                root.after(100, poll_queue)
 
             poll_queue()
 
@@ -1391,4 +1462,5 @@ def main():
     root.mainloop()
 
 if __name__ == '__main__':
+    multiprocessing.freeze_support()
     main()
