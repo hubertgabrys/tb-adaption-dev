@@ -744,7 +744,9 @@ def perform_registration(current_directory, patient_id, rtplan_label,
                          selected_series_uid=None, selected_modality=None,
                          moving_series_uid=None, moving_modality=None,
                          confirm_fn=None,
-                         viewer_fn=None):
+                         viewer_fn=None,
+                         auto_approve: bool = False,
+                         auto_approve_threshold: float = 20.0):
     print(f"{get_datetime()} Starting registration process...")
     start_time = time.time()
     current_directory = Path(current_directory)
@@ -884,6 +886,7 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     print(f"{get_datetime()} Final transform: {[round(e, 2) for e in translation]} mm")
     print(f"{get_datetime()} Final normalized mutual information (Studholme): {normalized_metric_value:.4f}")
 
+    quality_percent = None
     if percentile is not None:
         quality_percent = 100.0 - percentile
         stars = star_rating(quality_percent)
@@ -899,6 +902,12 @@ def perform_registration(current_directory, patient_id, rtplan_label,
     print(f"{get_datetime()} Registration took {duration:.2f} seconds")
     print(f"{get_datetime()} DONE\n")
 
+    auto_approved = (
+        auto_approve
+        and quality_percent is not None
+        and quality_percent > auto_approve_threshold
+    )
+
     viewer = viewer_fn or run_viewer
     viewer(
         iso_fixed,
@@ -909,13 +918,17 @@ def perform_registration(current_directory, patient_id, rtplan_label,
         pad_slices=pad_slices,
         metric_value=normalized_metric_value,
         quality_text=quality_line,
+        approved_message="Registration approved" if auto_approved else None,
+        block=not auto_approved,
     )
 
     prompt_lines = ["Accept registration result?", f"Cost: {normalized_metric_value:.4f}", quality_line,
                     "Accept? (y/n): "]
     prompt = "\n".join(prompt_lines)
 
-    if confirm_fn is None:
+    if auto_approved:
+        registration_accepted = True
+    elif confirm_fn is None:
         registration_accepted = input(prompt) == "y"
     else:
         registration_accepted = confirm_fn(normalized_metric_value, quality_line)
@@ -1245,17 +1258,18 @@ class MultiViewOverlay:
 
         self.fig.canvas.mpl_connect('scroll_event', self.on_scroll)
 
-    def show(self):
+    def show(self, block: bool = True):
         """Display the viewer window."""
         try:
-            plt.show()
+            plt.show(block=block)
         finally:
-            # Explicitly close the figure while we're still on the Tk thread so
-            # Tk-owned objects (e.g. PhotoImage instances) are destroyed from
-            # the main loop rather than a background worker collecting them
-            # later, which would otherwise raise "main thread is not in main
-            # loop" RuntimeError warnings during automation.
-            plt.close(self.fig)
+            if block:
+                # Explicitly close the figure while we're still on the Tk thread so
+                # Tk-owned objects (e.g. PhotoImage instances) are destroyed from
+                # the main loop rather than a background worker collecting them
+                # later, which would otherwise raise "main thread is not in main
+                # loop" RuntimeError warnings during automation.
+                plt.close(self.fig)
 
     def _compute_range(self, array):
         lo = np.percentile(array, 1)
@@ -1354,6 +1368,8 @@ def run_viewer(
     pad_slices=0,
     metric_value=None,
     quality_text=None,
+    approved_message=None,
+    block: bool = True,
 ):
     """Display fixed and moving images with optional padding of the fixed image."""
     if pad_slices > 0:
@@ -1394,6 +1410,17 @@ def run_viewer(
     if quality_text:
         info_parts.append(quality_text)
     if info_parts:
-        overlay.fig.suptitle(" | ".join(info_parts), fontsize=14)
-    overlay.show()
+        overlay.fig.suptitle(" | ".join(info_parts), fontsize=14, y=0.92)
+    if approved_message:
+        overlay.fig.text(
+            0.5,
+            0.98,
+            approved_message,
+            ha="center",
+            va="top",
+            fontsize=20,
+            color="green",
+            weight="bold",
+        )
+    overlay.show(block=block)
     return None

@@ -602,6 +602,14 @@ def main():
     )
     chk_full_automation.grid(row=4, column=0, sticky="w", padx=10, pady=(0, 5))
 
+    auto_approve_var = tk.BooleanVar(value=False)
+    chk_auto_approve = tk.Checkbutton(
+        root,
+        text="Automatic registration approval",
+        variable=auto_approve_var,
+    )
+    chk_auto_approve.grid(row=5, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 5))
+
     # Get Base Plan button with status label
     baseplan_status = tk.Label(root, text="", font=("Helvetica", 14))
 
@@ -629,8 +637,8 @@ def main():
             print(f"{get_datetime()} Failed to get base plan: {exc}")
 
     btn_baseplan = tk.Button(root, text="Get base plan", command=on_get_base_plan)
-    btn_baseplan.grid(row=5, column=0, sticky="w", padx=10)
-    baseplan_status.grid(row=5, column=1, sticky="w")
+    btn_baseplan.grid(row=6, column=0, sticky="w", padx=10)
+    baseplan_status.grid(row=6, column=1, sticky="w")
 
     # Store base plan series information
     base_series_info = {}
@@ -869,12 +877,12 @@ def main():
         threading.Thread(target=worker, daemon=True).start()
 
     btn_images = tk.Button(root, text="Get imaging", command=on_get_images)
-    btn_images.grid(row=6, column=0, sticky="w", padx=10, pady=(0, 5))
-    images_status.grid(row=6, column=1, sticky="w")
+    btn_images.grid(row=7, column=0, sticky="w", padx=10, pady=(0, 5))
+    images_status.grid(row=7, column=1, sticky="w")
 
     # Imaging series frame (initially empty)
     series_frame = tk.Frame(root)
-    series_frame.grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=10)
+    series_frame.grid(row=8, column=0, columnspan=2, sticky="w", padx=10, pady=10)
 
 
     # Delete selected series button
@@ -934,15 +942,16 @@ def main():
         bg="#ffbbbb",
         activebackground="#ff9999",
     )
-    btn_cleanup.grid(row=20, column=0, sticky="w", padx=10, pady=(50, 10))
-    cleanup_status.grid(row=20, column=1, sticky="w", pady=(50, 10))
+    btn_cleanup.grid(row=21, column=0, sticky="w", padx=10, pady=(50, 10))
+    cleanup_status.grid(row=21, column=1, sticky="w", pady=(50, 10))
 
     # Dropdown menu for registration series
     selected_label_var = tk.StringVar()
     selected_uid_var = tk.StringVar()
-    tk.Label(root, text="Select Daily Series for Registration").grid(row=11, column=0, columnspan=2, sticky="w", padx=10)
+
+    tk.Label(root, text="Select Daily Series for Registration").grid(row=12, column=0, columnspan=2, sticky="w", padx=10)
     dropdown = tk.OptionMenu(root, selected_label_var, '')
-    dropdown.grid(row=12, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    dropdown.grid(row=13, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
 
     # Register button
     register_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -987,12 +996,14 @@ def main():
             return run_on_tk_thread(ask_user, wait=True)
 
         def view_registration(*args, **kwargs):
-            """Run the matplotlib viewer on the Tk thread and wait for it to close."""
+            """Run the matplotlib viewer on the Tk thread."""
+
+            block = kwargs.pop("block", True)
 
             def launch():
-                return run_viewer(*args, **kwargs)
+                return run_viewer(*args, **kwargs, block=block)
 
-            return run_on_tk_thread(launch, wait=True)
+            return run_on_tk_thread(launch, wait=block)
 
         def finalize_failure(err=None, rejected=False):
             """Update UI and automation flags when registration fails."""
@@ -1121,6 +1132,7 @@ def main():
                     moving_modality=bp_modality,
                     confirm_fn=confirm_threadsafe,
                     viewer_fn=view_registration,
+                    auto_approve=auto_approve_var.get(),
                 )
             except Exception as exc:
                 run_on_tk_thread(finalize_failure, err=exc)
@@ -1132,13 +1144,13 @@ def main():
 
 
     btn_register = tk.Button(root, text="Register", command=lambda: on_register())
-    btn_register.grid(row=13, column=0, sticky="w", padx=10, pady=(0, 10))
-    register_status.grid(row=13, column=1, sticky="w")
+    btn_register.grid(row=14, column=0, sticky="w", padx=10, pady=(0, 10))
+    register_status.grid(row=14, column=1, sticky="w")
 
     copy_status = tk.Label(root, text="", font=("Helvetica", 14))
-    copy_status.grid(row=14, column=1, sticky="w")
+    copy_status.grid(row=15, column=1, sticky="w")
 
-    register_progress.grid(row=15, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    register_progress.grid(row=16, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
     register_progress.grid_remove()
 
     send_status = tk.Label(root, text="", font=("Helvetica", 14))
@@ -1319,9 +1331,9 @@ def main():
         poll_queue()
 
     btn_send = tk.Button(root, text="Send to Aria", command=on_send_to_aria)
-    btn_send.grid(row=16, column=0, sticky="w", padx=10, pady=(0, 10))
-    send_status.grid(row=16, column=1, sticky="w")
-    send_progress.grid(row=17, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    btn_send.grid(row=17, column=0, sticky="w", padx=10, pady=(0, 10))
+    send_status.grid(row=17, column=1, sticky="w")
+    send_progress.grid(row=18, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
     send_progress.grid_remove()
     sent_panel.grid(row=0, column=0, sticky="nsew")
     sent_label.pack(anchor="w")
