@@ -213,10 +213,10 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
                 print(f"Skipping ROI {number} ({name})")
                 return True
 
-        if name_lower in {"body", "couchsurface", "couchinterior"}:
+        if name_lower in {"couchsurface", "couchinterior"}:
             print(f"Skipping ROI {number} ({name})")
             return True
-        if "ring" in name_lower or "body" in name_lower:
+        if "ring" in name_lower or "body" in name_lower or "skin" in name_lower:
             print(f"Skipping ROI {number} ({name})")
             return True
 
