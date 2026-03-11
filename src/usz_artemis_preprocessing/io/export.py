@@ -6,7 +6,7 @@ from pydicom.uid import ImplicitVRLittleEndian
 from pynetdicom import AE
 from pynetdicom.sop_class import CTImageStorage, MRImageStorage, RTStructureSetStorage, Verification, SpatialRegistrationStorage
 
-from utils import load_environment, require_env
+from usz_artemis_preprocessing.utils import load_environment, require_env
 
 # Load the .env
 load_environment(".env")

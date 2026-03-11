@@ -5,8 +5,8 @@ import pydicom
 from pydicom.dataset import Dataset, FileDataset
 from pydicom.uid import generate_uid
 
-from rtstruct_id import create_rtstruct_id
-from utils import get_datetime
+from usz_artemis_preprocessing.dicom.rtstruct_id import create_rtstruct_id
+from usz_artemis_preprocessing.utils import get_datetime
 
 
 def create_empty_rtstruct(dir_path, series_uid, filepaths):

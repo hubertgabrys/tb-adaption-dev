@@ -1,5 +1,6 @@
 import os
 import sys
+from pathlib import Path
 
 import PyInstaller.__main__
 import pydicom
@@ -17,10 +18,13 @@ pydicom_data_dir = os.path.join(os.path.dirname(pydicom.__file__), 'data')
 # Print pydicom data directory for verification
 print(f"Pydicom data directory: {pydicom_data_dir}")
 
+project_root = Path(__file__).resolve().parents[1]
+
 PyInstaller.__main__.run([
-    'run_gui.py',
+    str(project_root / 'run_gui.py'),
     '--onefile',
-    f'--add-data=.env{add_data_sep}.',
+    f'--add-data={project_root / ".env"}{add_data_sep}.',
+    f'--paths={project_root / "src"}',
     '--hidden-import=pandas',
     '--hidden-import=pydicom',
     '--hidden-import=pynetdicom',

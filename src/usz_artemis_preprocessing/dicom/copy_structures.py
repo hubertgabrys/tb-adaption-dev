@@ -7,7 +7,7 @@ from pathlib import Path
 import pydicom
 from tqdm import tqdm
 
-from utils import float_to_ds_string
+from usz_artemis_preprocessing.utils import float_to_ds_string
 
 
 LIMBUS_STRUCTURE_MAP = {

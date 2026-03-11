@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pydicom
 
-from utils import get_datetime
+from usz_artemis_preprocessing.utils import get_datetime
 
 
 def get_file_path(directory_path: str, filename: str) -> str:

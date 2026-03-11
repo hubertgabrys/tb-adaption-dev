@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "usz_artemis_preprocessing"
+version = "0.1.0"
+description = "TB adaption workflow tools"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "joblib",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "pydicom",
+    "pynetdicom",
+    "python-dotenv",
+    "SimpleITK",
+    "tqdm",
+]
+
+[tool.setuptools]
+include-package-data = true
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["usz_artemis_preprocessing*"]

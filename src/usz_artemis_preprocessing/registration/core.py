@@ -16,15 +16,15 @@ from pydicom.sequence import Sequence
 from pydicom.uid import generate_uid, ExplicitVRLittleEndian
 from pydicom.errors import InvalidDicomError
 
-from dbconnector import DBHandler
-from utils import (
+from usz_artemis_preprocessing.db.connector import DBHandler
+from usz_artemis_preprocessing.utils import (
     get_datetime,
     load_environment,
     configure_sitk_threads,
     float_to_ds_string,
     require_env,
 )
-from copy_structures import read_base_rtstruct
+from usz_artemis_preprocessing.dicom.copy_structures import read_base_rtstruct
 
 FULL_STAR = "\u2605"  # ★
 EMPTY_STAR = "\u2606"  # ☆

@@ -9,7 +9,7 @@ from pydicom.multival import MultiValue
 from pydicom.tag import Tag
 from pydicom.uid import generate_uid
 
-from utils import get_datetime
+from usz_artemis_preprocessing.utils import get_datetime
 
 
 def get_dicom_value(ds, tag, default=""):

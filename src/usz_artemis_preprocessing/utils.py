@@ -3,8 +3,14 @@ import functools
 import os
 import sys
 import warnings
+from pathlib import Path
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - depends on local environment
+    def load_dotenv(*args, **kwargs):
+        return False
+
 from pydicom.valuerep import DS
 
 
@@ -38,14 +44,24 @@ def check_if_ct_present(directory):
 
 
 def load_environment(env_file_path: str = ".env"):
+    env_path = Path(env_file_path)
     if getattr(sys, "frozen", False):
         # running as bundled exe
-        base_dir = os.path.dirname(sys.executable)
+        candidates = [Path(sys.executable).resolve().parent / env_path]
     else:
-        # running as normal script
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-    dotenv_path = os.path.join(base_dir, env_file_path)
-    load_dotenv(dotenv_path)
+        project_root = Path(__file__).resolve().parents[1]
+        candidates = [
+            Path.cwd() / env_path,
+            project_root / env_path,
+        ]
+
+    for candidate in candidates:
+        if candidate.exists():
+            load_dotenv(candidate)
+            return
+
+    # Fall back to the project-root candidate so callers keep consistent behavior.
+    load_dotenv(candidates[-1])
 
 
 def require_env(var_name: str) -> str:
