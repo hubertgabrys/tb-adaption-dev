@@ -20,6 +20,13 @@ LIMBUS_STRUCTURE_MAP = {
     "Prostate": "Prostate",
 }
 
+ROI_DISPLAY_COLOR_MAP = {
+    "bladder": [255, 255, 0],
+    "bowel": [0, 178, 47],
+    "sigma": [255, 175, 0],
+    "rectum": [191, 127, 0],
+}
+
 
 def transform_contour_points(transform, contour_data, precision: int = 8):
     """
@@ -47,6 +54,15 @@ def transform_contour_points(transform, contour_data, precision: int = 8):
         out_ds.append(float_to_ds_string(z_t, precision))
 
     return out_ds
+
+
+def _apply_roi_display_color(roi_contour, roi_name):
+    roi_name_lower = (roi_name or "").lower()
+    color = ROI_DISPLAY_COLOR_MAP.get(roi_name_lower)
+    if color is None and roi_name_lower.startswith("ctv"):
+        color = [255, 255, 128]
+    if color is not None:
+        roi_contour.ROIDisplayColor = color
 
 
 def _rtstruct_references_series(ds, series_uid):
@@ -357,6 +373,7 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
                         continue
                     new_contour = copy.deepcopy(contour)
                     new_contour.ReferencedROINumber = new_number
+                    _apply_roi_display_color(new_contour, target_name)
                     target_rtstruct.ROIContourSequence.append(new_contour)
 
             if hasattr(limbus_rtstruct, "RTROIObservationsSequence"):
@@ -422,6 +439,7 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
 
         # Look up the ROI name that corresponds to this contour using the ROI number.
         roi_name = roi_lookup.get(ref_roi_num, "")
+        _apply_roi_display_color(new_roi_contour, roi_name)
         if skip_contour(roi_name):
             # For ROIs starting with "PTV", remove the Contour Sequence.
             print(f"Copying ROI {ref_roi_num} ({roi_name}) without contour sequence")
@@ -452,7 +470,7 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
             rtstruct_new.RTROIObservationsSequence.append(new_obs)
 
     # --- Step 4: Copy supplemental limbus structures when available ---
-    _copy_limbus_structures(rtstruct_new, current_directory, series_uid=series_uid)
+    # _copy_limbus_structures(rtstruct_new, current_directory, series_uid=series_uid)
 
     # --- Save the Updated RTSTRUCT ---
     output_filename = os.path.join(current_directory, rtstruct_new_filename)
