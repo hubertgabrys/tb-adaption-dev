@@ -8,7 +8,7 @@ def create_rtstruct_id(meta_data):
     """Generate a proposed ID based on the image modality and metadata."""
     modality = getattr(meta_data, "Modality", "")
     series_desc = getattr(meta_data, "SeriesDescription", "")
-    date_str = getattr(meta_data, "StudyDate", "")
+    date_str = getattr(meta_data, "SeriesDate", "")
 
     date_str = datetime2yymmdd(date_str)
 
